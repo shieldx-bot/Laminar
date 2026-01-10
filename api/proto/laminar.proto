@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package laminar;
 
+import "google/protobuf/struct.proto";
+
 option go_package = "./pb";
 
 // Service định nghĩa các phương thức giao tiếp chính
@@ -17,6 +19,9 @@ service LaminarGateway {
   rpc PipelineProcess (stream WorkRequest) returns (stream WorkResponse);
 
   rpc TestHTTP3 (TestHTTP3Request) returns (TestHTTP3Response);
+
+    rpc PingPong (PingRequest) returns (PingResponse);
+
 }
 
 message WorkRequest {
@@ -59,11 +64,23 @@ message EventSubscription {
 
 message TestHTTP3Request {
    string QueryId = 1;
+   string QuerySQL = 3; 
    bytes payload = 2;
 }
 message TestHTTP3Response {
    string status = 1;
    string query_id = 2;
-   int32 received_size = 3;
+  repeated google.protobuf.Struct records = 4;
+     int32 received_size = 3;
 }
 
+
+
+
+message PingRequest {
+  string message = 1;
+}
+
+message PingResponse {
+  string message = 1;
+}
