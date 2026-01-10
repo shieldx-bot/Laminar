@@ -31,3 +31,4 @@ go.work.sum
 # .idea/
 # .vscode/
 internal/worker/main.go
+api/proto/document.md
