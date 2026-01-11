@@ -98,7 +98,7 @@ func main() {
 			return
 		}
 
-		addr := "localhost:50051"
+		addr := "34.87.152.48:50051"
 
 		conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
