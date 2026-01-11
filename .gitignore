@@ -30,7 +30,7 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
-internal/worker/main.go
+ 
 api/proto/document.md
 internal/worker/test/task1/Document.md
 internal/worker/ADAPTIVE_QUEUE_DESIGN.md
@@ -39,3 +39,7 @@ internal/worker/test/task2/document.md
 .gitignore
 internal/worker/test/task2/REPORT.md
 setup/setup_http3.md
+benchmark/NaiveCheck/node_modules
+report.md
+.gitignore
+REPORT_BENCHMARK.md
