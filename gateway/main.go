@@ -131,18 +131,13 @@ func main() {
 
 		// 1) Local cache at gateway (hot responses)
 		if val, ok := queryCache.Get(key); ok {
-			if cachedResp, ok := val.(*pb.TestHTTP3Response); ok {
-				c.JSON(http.StatusOK, gin.H{
-					"Status":       cachedResp.GetStatus(),
-					"QueryId":      jsonReq.QueryId,
-					"Records":      cachedResp.GetRecords(),
-					"ReceivedSize": cachedResp.GetReceivedSize(),
-				})
+			if cachedBytes, ok := val.([]byte); ok {
+				c.Data(http.StatusOK, "application/json", cachedBytes)
 				return
 			}
 		}
 
-		ch := testHTTP3SingleFlight.DoChan(key, func() (interface{}, error) {
+		resAny, err, _ := testHTTP3SingleFlight.Do(key, func() (interface{}, error) {
 			// Double-check cache inside singleflight to avoid duplicate work
 			if val, ok := queryCache.Get(key); ok {
 				if cachedResp, ok := val.(*pb.TestHTTP3Response); ok {
@@ -150,9 +145,7 @@ func main() {
 				}
 			}
 
-			// Use a background context so the coalesced execution isn't canceled just
-			// because one HTTP client disconnects.
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 			defer cancel()
 			payload := make([]byte, 10)
 			resp, err := grpcClient.TestHTTP3(ctx, &pb.TestHTTP3Request{
@@ -163,23 +156,13 @@ func main() {
 			if err != nil {
 				return nil, err
 			}
+			buf, _ := json.Marshal(resp)
 			// 2) Store into gateway cache (TTL 20s)
-			queryCache.SetWithTTL(key, resp, 1, 20*time.Second)
+			queryCache.SetWithTTL(key, buf, 1, 20*time.Second)
 			return resp, nil
 		})
-
-		var resAny interface{}
-		select {
-		case res := <-ch:
-			if res.Err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("TestHTTP3: %v", res.Err)})
-				return
-			}
-			resAny = res.Val
-		case <-c.Request.Context().Done():
-			// Client disconnected or timed out; stop waiting.
-			// 499 is commonly used for "Client Closed Request".
-			c.Status(499)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("TestHTTP3: %v", err)})
 			return
 		}
 
