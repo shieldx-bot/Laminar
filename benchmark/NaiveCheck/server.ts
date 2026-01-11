@@ -18,18 +18,17 @@ app.get('/api/ping', async(req: Request, res: Response) => {
 
 app.post('/api/naive', async (req: Request, res: Response) => {
   try {
-    let query = `
-     SELECT id, username, email, password_hash, balance, is_active, created_at, updated_at FROM users LIMIT 1
-    `;
-
-    if (req.body && req.body.QuerySQL) {
-       query = req.body.QuerySQL;
-    }
-
+    
+    let query = req.body.QuerySQL;
     const client = await pool.connect();
     try {
       const result = await client.query(query);
-      res.json({ data: result.rows });
+      res.json({ 
+        Status: 'success',
+        QueryId: req.body.QueryId,
+        Records: result.rows , 
+        ReceivedSize: JSON.stringify(result.rows).length
+      });
     } finally {
       client.release();
     }

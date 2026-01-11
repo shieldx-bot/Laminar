@@ -1,10 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"github/shieldx-bot/gateway/pb"
-	"log"
 	"net/http"
 	"os"
 	"time"
@@ -30,7 +31,61 @@ func main() {
 		c.Header("Cache-Control", "no-store")
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
+	router.GET("/ping-service-go", func(c *gin.Context) {
+		fetchURL := "http://34.87.152.48:8081/api/ping" // Thay đổi URL theo yêu cầu
+		resp, err := http.Get(fetchURL)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch from external host"})
+			return
+		}
+		defer resp.Body.Close()
 
+		var result map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode response"})
+			return
+		}
+
+		c.JSON(http.StatusOK, result)
+	})
+
+	router.POST("/TestHTTP3-service-go", func(c *gin.Context) {
+		var jsonReq struct {
+			QueryId  string `json:"QueryId"`
+			QuerySQL string `json:"QuerySQL"`
+			Payload  string `json:"Payload"`
+		}
+		if err := c.BindJSON(&jsonReq); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		addr := "http://34.87.152.48:8081/api/naive"
+		payload := map[string]string{
+			"QueryId":  jsonReq.QueryId,
+			"QuerySQL": jsonReq.QuerySQL,
+			"Payload":  jsonReq.Payload,
+		}
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal payload"})
+			return
+		}
+
+		resp, err := http.Post(addr, "application/json", bytes.NewBuffer(payloadBytes))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send request to external host"})
+			return
+		}
+		defer resp.Body.Close()
+
+		var result map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode response"})
+			return
+		}
+
+		c.JSON(http.StatusOK, result)
+	})
 	// POST query endpoint (good for load tests; avoids any accidental intermediary caching)
 	router.POST("/TestHTTP3", func(c *gin.Context) {
 		var jsonReq struct {
@@ -45,9 +100,10 @@ func main() {
 
 		addr := "localhost:50051"
 
-		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
-			log.Fatalf("dial %s: %v", addr, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("dial %s: %v", addr, err)})
+			return
 		}
 		defer conn.Close()
 
@@ -55,7 +111,7 @@ func main() {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		Payload := make([]byte, 1024) // Example payload (1024 bytes)
+		Payload := make([]byte, 10) // Example payload (1024 bytes)
 
 		resp, err := client.TestHTTP3(ctx, &pb.TestHTTP3Request{
 			QueryId:  jsonReq.QueryId,
@@ -63,7 +119,8 @@ func main() {
 			Payload:  Payload,
 		})
 		if err != nil {
-			log.Fatalf("TestHTTP3: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("TestHTTP3: %v", err)})
+			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{
