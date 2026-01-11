@@ -4,7 +4,7 @@ export const options = {
   scenarios: {
     thundering_herd: {
       executor: 'per-vu-iterations',
-      vus: 1000,        // 10.000 users
+      vus: 2000,        // 2.000 users
       iterations: 1,    // mỗi user 1 request
       maxDuration: '30s',
     },
@@ -12,9 +12,10 @@ export const options = {
 };
 
 export default function () {
+  const randomID = Math.floor(Math.random() * 10).toString();
   const payload = JSON.stringify({
-    "QueryId": "1234",
-    "QuerySQL": "SELECT id, username, email, password_hash, balance, is_active, created_at, updated_at FROM users LIMIT 1"
+    "QueryId": randomID,
+    "QuerySQL": "SELECT id, username, email, password_hash, balance, is_active, created_at, updated_at FROM users  where id=" + randomID,
   });
 
   const params = {
@@ -23,7 +24,7 @@ export default function () {
     },
   };
 
-  const res = http.post('http://34.177.108.132:8081/TestHTTP3', payload, params); 
+  const res = http.post('http://34.87.152.48:8081/TestHTTP3', payload, params); 
   
   if (res.status !== 200) {
     console.error(`Error: Status ${res.status}. Body: ${res.body}`);
