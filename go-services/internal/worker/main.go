@@ -10,7 +10,6 @@ import (
 
 	"github.com/dgraph-io/ristretto"
 	_ "github.com/lib/pq"
-	"golang.org/x/sync/singleflight"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	pb "github/shieldx-bot/laminar/pb"
@@ -34,7 +33,6 @@ type ComputeServer struct {
 	workerChans []chan *Job
 	numShards   int
 	cache       *ristretto.Cache
-	sf          singleflight.Group
 }
 
 type ExampleRecord struct {
@@ -298,64 +296,48 @@ func (s *ComputeServer) send(job *Job, resp *pb.TestHTTP3Response, err error) {
 }
 
 func (s *ComputeServer) ExecuteQuery(ctx context.Context, req *pb.TestHTTP3Request) (*pb.TestHTTP3Response, error) {
-	// Kỹ thuật Request Coalescing (SingleFlight)
-	// Chống Thundering Herd: Gộp các request cùng QuerySQL thành 1 execution
-	key := req.GetQuerySQL()
-	if key == "" {
-		key = req.GetQueryId() // Fallback
+	// 1. Sharding Algorithm: Chọn Worker dựa trên QueryId
+	// Điều này đảm bảo cùng 1 QueryId luôn vào cùng 1 Worker -> Tăng Cache Hit
+	shardID := int(hashTenant(req.GetQueryId()) % uint32(s.numShards))
+
+	job := &Job{
+		Ctx:      ctx,
+		QueryId:  req.GetQueryId(),
+		CT:       req,
+		RespChan: make(chan *JobResult, 1),
 	}
 
-	result, err, _ := s.sf.Do(key, func() (interface{}, error) {
-		// 1. Sharding Algorithm: Chọn Worker dựa trên TenantID
-		// Điều này đảm bảo cùng 1 Tenant luôn vào cùng 1 Worker -> Tăng Cache Hit
-		shardID := int(hashTenant(req.GetQueryId()) % uint32(s.numShards))
-
-		// NOTE: Không dùng sync.Pool cho Job vì ctx.Done() có thể khiến job bị reuse
-		// trước khi worker gửi response -> race/stale response.
-		job := &Job{
-			Ctx:     ctx,
-			QueryId: req.GetQueryId(),
-			CT:      req,
-
-			RespChan: make(chan *JobResult, 1),
-		}
-
-		if len(s.workerChans[shardID]) > TotalMaxProcessOnWorker {
-			shardID = (shardID + 1) % s.numShards
-		}
-
-		// 3. Đẩy Job vào hàng đợi của Worker tương ứng (Producer)
-		select {
-		case s.workerChans[shardID] <- job:
-			// Đã gửi thành công
-		case <-ctx.Done():
-			return nil, ctx.Err() // Client hủy request
-		default:
-			// Backpressure: Nếu hàng đợi đầy, từ chối ngay lập tức
-			return nil, fmt.Errorf("Server overloaded, please retry later")
-		}
-
-		// 4. Chờ kết quả từ Worker
-		select {
-		case result := <-job.RespChan:
-			return result.Resp, result.Err
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	})
-
-	if err != nil {
-		return nil, err
+	if len(s.workerChans[shardID]) > TotalMaxProcessOnWorker {
+		shardID = (shardID + 1) % s.numShards
 	}
 
-	// Trả về kết quả (đảm bảo QueryId đúng với request gốc của user)
-	originResp := result.(*pb.TestHTTP3Response)
-	return &pb.TestHTTP3Response{
-		Status:       originResp.Status,
-		QueryId:      req.GetQueryId(), // Trả lại ID riêng của từng request
-		Records:      originResp.Records,
-		ReceivedSize: originResp.ReceivedSize,
-	}, nil
+	// 2. Đẩy Job vào hàng đợi của Worker tương ứng (Producer)
+	select {
+	case s.workerChans[shardID] <- job:
+		// Đã gửi thành công
+	case <-ctx.Done():
+		return nil, ctx.Err() // Client hủy request
+	default:
+		// Backpressure: Nếu hàng đợi đầy, từ chối ngay lập tức
+		return nil, fmt.Errorf("Server overloaded, please retry later")
+	}
+
+	// 3. Chờ kết quả từ Worker
+	select {
+	case result := <-job.RespChan:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		originResp := result.Resp
+		return &pb.TestHTTP3Response{
+			Status:       originResp.Status,
+			QueryId:      req.GetQueryId(),
+			Records:      originResp.Records,
+			ReceivedSize: originResp.ReceivedSize,
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // Hàm băm đơn giản để Sharding

@@ -12,13 +12,27 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq" // Driver postgres
+	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+var testHTTP3SingleFlight singleflight.Group
+
 func main() {
 
 	router := gin.Default()
+
+	grpcAddr := os.Getenv("LAMINAR_GRPC_ADDR")
+	if grpcAddr == "" {
+		grpcAddr = "34.87.152.48:50051"
+	}
+	grpcConn, err := grpc.Dial(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		panic(fmt.Errorf("dial %s: %w", grpcAddr, err))
+	}
+	defer grpcConn.Close()
+	grpcClient := pb.NewLaminarGatewayClient(grpcConn)
 
 	router.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{
@@ -98,34 +112,31 @@ func main() {
 			return
 		}
 
-		addr := "34.87.152.48:50051"
-
-		conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("dial %s: %v", addr, err)})
-			return
+		key := jsonReq.QuerySQL
+		if key == "" {
+			key = jsonReq.QueryId
 		}
-		defer conn.Close()
 
-		client := pb.NewLaminarGatewayClient(conn)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		Payload := make([]byte, 10) // Example payload (1024 bytes)
-
-		resp, err := client.TestHTTP3(ctx, &pb.TestHTTP3Request{
-			QueryId:  jsonReq.QueryId,
-			QuerySQL: jsonReq.QuerySQL,
-			Payload:  Payload,
+		resAny, err, _ := testHTTP3SingleFlight.Do(key, func() (interface{}, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			payload := make([]byte, 10)
+			return grpcClient.TestHTTP3(ctx, &pb.TestHTTP3Request{
+				QueryId:  jsonReq.QueryId,
+				QuerySQL: jsonReq.QuerySQL,
+				Payload:  payload,
+			})
 		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("TestHTTP3: %v", err)})
 			return
 		}
 
+		resp := resAny.(*pb.TestHTTP3Response)
+		// Preserve per-request QueryId even when coalesced.
 		c.JSON(http.StatusOK, gin.H{
 			"Status":       resp.GetStatus(),
-			"QueryId":      resp.GetQueryId(),
+			"QueryId":      jsonReq.QueryId,
 			"Records":      resp.GetRecords(),
 			"ReceivedSize": resp.GetReceivedSize(),
 		})
