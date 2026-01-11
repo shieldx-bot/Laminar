@@ -4,7 +4,7 @@ export const options = {
   scenarios: {
     thundering_herd: {
       executor: 'per-vu-iterations',
-      vus: 2000,        // 2.000 users
+      vus: 10000,        // 2.000 users
       iterations: 1,    // mỗi user 1 request
       maxDuration: '30s',
     },
@@ -12,10 +12,11 @@ export const options = {
 };
 
 export default function () {
-  const randomID = Math.floor(Math.random() * 10).toString();
+  // const randomID = Math.floor(Math.random() * 10).toString();
   const payload = JSON.stringify({
-    "QueryId": randomID,
-    "QuerySQL": "SELECT id, username, email, password_hash, balance, is_active, created_at, updated_at FROM users  where id=" + randomID,
+    "QueryId": "randomID",
+       "QuerySQL": "SELECT id, username, email, password_hash, balance, is_active, created_at, updated_at FROM users  LIMIT 1",
+    // "QuerySQL": "SELECT id, username, email, password_hash, balance, is_active, created_at, updated_at FROM users  where id=" + randomID,
   });
 
   const params = {
