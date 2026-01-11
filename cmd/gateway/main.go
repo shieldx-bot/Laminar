@@ -59,7 +59,7 @@ func (s *server) TestHTTP3(ctx context.Context, req *pb.TestHTTP3Request) (*pb.T
 
 func main() {
 	// 2. KHỞI TẠO KẾT NỐI DB MỘT LẦN DUY NHẤT LÚC STARTUP
-	connStr := "host=localhost port=5432 user=postgres password=Vananh12345@ dbname=laminar sslmode=disable"
+	connStr := "host=34.177.108.132 port=5432 user=postgres password=Vananh12345@ dbname=laminar sslmode=disable"
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		panic(err)
@@ -68,7 +68,7 @@ func main() {
 	defer db.Close()
 
 	// Cấu hình Connection Pool (Quan trọng cho High Performance)
-	db.SetMaxOpenConns(50)   // Giới hạn max 50 kết nối cùng lúc
+	db.SetMaxOpenConns(200)  // Giới hạn max 1000 kết nối cùng lúc
 	db.SetMaxIdleConns(25)   // Giữ 25 kết nối rảnh để dùng ngay
 	db.SetConnMaxLifetime(0) // 0 = dùng mãi mãi (hoặc set time để refresh)
 
