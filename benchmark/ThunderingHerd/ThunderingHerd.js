@@ -25,7 +25,7 @@ export default function () {
     },
   };
 
-  const res = http.post('http://34.87.152.48:8081/TestHTTP3', payload, params); 
+  const res = http.post('http://34.87.152.48:8081/TestHTTP3-service-go', payload, params); 
   
   if (res.status !== 200) {
     console.error(`Error: Status ${res.status}. Body: ${res.body}`);
