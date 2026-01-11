@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { Pool } from 'pg';
 
 const app = express();
-const port = 3001;
+const port = 8081;
 
 const pool = new Pool({
   connectionString: "postgresql://postgres:Vananh12345%40@34.177.108.132:5432/laminar?sslmode=disable",
@@ -11,6 +11,10 @@ const pool = new Pool({
 });
 
 app.use(express.json());
+
+app.get('/api/ping', async(req: Request, res: Response) => { 
+  res.json({ message: 'pong' });
+})
 
 app.post('/api/naive', async (req: Request, res: Response) => {
   try {
