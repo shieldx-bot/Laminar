@@ -23,6 +23,7 @@ const (
 	LaminarGateway_SubscribeToEvents_FullMethodName = "/laminar.LaminarGateway/SubscribeToEvents"
 	LaminarGateway_PipelineProcess_FullMethodName   = "/laminar.LaminarGateway/PipelineProcess"
 	LaminarGateway_TestHTTP3_FullMethodName         = "/laminar.LaminarGateway/TestHTTP3"
+	LaminarGateway_PingPong_FullMethodName          = "/laminar.LaminarGateway/PingPong"
 )
 
 // LaminarGatewayClient is the client API for LaminarGateway service.
@@ -39,6 +40,7 @@ type LaminarGatewayClient interface {
 	// Client có thể gửi hàng nghìn request qua 1 connection duy nhất mà không bị Head-of-Line Blocking.
 	PipelineProcess(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[WorkRequest, WorkResponse], error)
 	TestHTTP3(ctx context.Context, in *TestHTTP3Request, opts ...grpc.CallOption) (*TestHTTP3Response, error)
+	PingPong(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 }
 
 type laminarGatewayClient struct {
@@ -101,6 +103,16 @@ func (c *laminarGatewayClient) TestHTTP3(ctx context.Context, in *TestHTTP3Reque
 	return out, nil
 }
 
+func (c *laminarGatewayClient) PingPong(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PingResponse)
+	err := c.cc.Invoke(ctx, LaminarGateway_PingPong_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LaminarGatewayServer is the server API for LaminarGateway service.
 // All implementations must embed UnimplementedLaminarGatewayServer
 // for forward compatibility.
@@ -115,6 +127,7 @@ type LaminarGatewayServer interface {
 	// Client có thể gửi hàng nghìn request qua 1 connection duy nhất mà không bị Head-of-Line Blocking.
 	PipelineProcess(grpc.BidiStreamingServer[WorkRequest, WorkResponse]) error
 	TestHTTP3(context.Context, *TestHTTP3Request) (*TestHTTP3Response, error)
+	PingPong(context.Context, *PingRequest) (*PingResponse, error)
 	mustEmbedUnimplementedLaminarGatewayServer()
 }
 
@@ -136,6 +149,9 @@ func (UnimplementedLaminarGatewayServer) PipelineProcess(grpc.BidiStreamingServe
 }
 func (UnimplementedLaminarGatewayServer) TestHTTP3(context.Context, *TestHTTP3Request) (*TestHTTP3Response, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TestHTTP3 not implemented")
+}
+func (UnimplementedLaminarGatewayServer) PingPong(context.Context, *PingRequest) (*PingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PingPong not implemented")
 }
 func (UnimplementedLaminarGatewayServer) mustEmbedUnimplementedLaminarGatewayServer() {}
 func (UnimplementedLaminarGatewayServer) testEmbeddedByValue()                        {}
@@ -212,6 +228,24 @@ func _LaminarGateway_TestHTTP3_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LaminarGateway_PingPong_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LaminarGatewayServer).PingPong(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LaminarGateway_PingPong_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LaminarGatewayServer).PingPong(ctx, req.(*PingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LaminarGateway_ServiceDesc is the grpc.ServiceDesc for LaminarGateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -226,6 +260,10 @@ var LaminarGateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TestHTTP3",
 			Handler:    _LaminarGateway_TestHTTP3_Handler,
+		},
+		{
+			MethodName: "PingPong",
+			Handler:    _LaminarGateway_PingPong_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
