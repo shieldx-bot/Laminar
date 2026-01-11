@@ -32,3 +32,10 @@ go.work.sum
 # .vscode/
 internal/worker/main.go
 api/proto/document.md
+internal/worker/test/task1/Document.md
+internal/worker/ADAPTIVE_QUEUE_DESIGN.md
+.gitignore
+internal/worker/test/task2/document.md
+.gitignore
+internal/worker/test/task2/REPORT.md
+setup/setup_http3.md
