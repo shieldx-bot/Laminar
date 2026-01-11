@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github/shieldx-bot/gateway/pb"
-	"math/rand"
 	"net/http"
 	"os"
 	"time"
@@ -143,7 +142,7 @@ func main() {
 			}
 		}
 
-		resAny, err, _ := testHTTP3SingleFlight.Do(key, func() (interface{}, error) {
+		ch := testHTTP3SingleFlight.DoChan(key, func() (interface{}, error) {
 			// Double-check cache inside singleflight to avoid duplicate work
 			if val, ok := queryCache.Get(key); ok {
 				if cachedResp, ok := val.(*pb.TestHTTP3Response); ok {
@@ -151,7 +150,9 @@ func main() {
 				}
 			}
 
-			ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+			// Use a background context so the coalesced execution isn't canceled just
+			// because one HTTP client disconnects.
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			payload := make([]byte, 10)
 			resp, err := grpcClient.TestHTTP3(ctx, &pb.TestHTTP3Request{
@@ -166,15 +167,21 @@ func main() {
 			queryCache.SetWithTTL(key, resp, 1, 20*time.Second)
 			return resp, nil
 		})
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("TestHTTP3: %v", err)})
+
+		var resAny interface{}
+		select {
+		case res := <-ch:
+			if res.Err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("TestHTTP3: %v", res.Err)})
+				return
+			}
+			resAny = res.Val
+		case <-c.Request.Context().Done():
+			// Client disconnected or timed out; stop waiting.
+			// 499 is commonly used for "Client Closed Request".
+			c.Status(499)
 			return
 		}
-
-		base := 10 * time.Millisecond
-		jitter := 10 * time.Millisecond
-
-		time.Sleep(base + time.Duration(rand.Int63n(int64(jitter))))
 
 		resp := resAny.(*pb.TestHTTP3Response)
 		// Preserve per-request QueryId even when coalesced.
