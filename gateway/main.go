@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/dgraph-io/ristretto"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq" // Driver postgres
 	"golang.org/x/sync/singleflight"
@@ -18,10 +19,21 @@ import (
 )
 
 var testHTTP3SingleFlight singleflight.Group
+var queryCache *ristretto.Cache
 
 func main() {
 
 	router := gin.Default()
+
+	cache, err := ristretto.NewCache(&ristretto.Config{
+		NumCounters: 1e7,
+		MaxCost:     1 << 30,
+		BufferItems: 64,
+	})
+	if err != nil {
+		panic(fmt.Errorf("failed to create ristretto cache: %w", err))
+	}
+	queryCache = cache
 
 	grpcAddr := os.Getenv("LAMINAR_GRPC_ADDR")
 	if grpcAddr == "" {
@@ -117,15 +129,41 @@ func main() {
 			key = jsonReq.QueryId
 		}
 
+		// 1) Local cache at gateway (hot responses)
+		if val, ok := queryCache.Get(key); ok {
+			if cachedResp, ok := val.(*pb.TestHTTP3Response); ok {
+				c.JSON(http.StatusOK, gin.H{
+					"Status":       cachedResp.GetStatus(),
+					"QueryId":      jsonReq.QueryId,
+					"Records":      cachedResp.GetRecords(),
+					"ReceivedSize": cachedResp.GetReceivedSize(),
+				})
+				return
+			}
+		}
+
 		resAny, err, _ := testHTTP3SingleFlight.Do(key, func() (interface{}, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			// Double-check cache inside singleflight to avoid duplicate work
+			if val, ok := queryCache.Get(key); ok {
+				if cachedResp, ok := val.(*pb.TestHTTP3Response); ok {
+					return cachedResp, nil
+				}
+			}
+
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 			defer cancel()
 			payload := make([]byte, 10)
-			return grpcClient.TestHTTP3(ctx, &pb.TestHTTP3Request{
+			resp, err := grpcClient.TestHTTP3(ctx, &pb.TestHTTP3Request{
 				QueryId:  jsonReq.QueryId,
 				QuerySQL: jsonReq.QuerySQL,
 				Payload:  payload,
 			})
+			if err != nil {
+				return nil, err
+			}
+			// 2) Store into gateway cache (TTL 5s)
+			queryCache.SetWithTTL(key, resp, 1, 5*time.Second)
+			return resp, nil
 		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("TestHTTP3: %v", err)})

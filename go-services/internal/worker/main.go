@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"runtime"
-	"time"
 
-	"github.com/dgraph-io/ristretto"
 	_ "github.com/lib/pq"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -32,7 +30,6 @@ type ComputeServer struct {
 	pb.UnimplementedLaminarGatewayServer
 	workerChans []chan *Job
 	numShards   int
-	cache       *ristretto.Cache
 }
 
 type ExampleRecord struct {
@@ -93,24 +90,9 @@ func ExecuteSQLQery(query string, db *sql.DB) ([]*structpb.Struct, error) {
 func NewComputeServer(db *sql.DB) *ComputeServer {
 	numShares := runtime.NumCPU()
 
-	cache, err := ristretto.NewCache(&ristretto.Config{
-		// NumCounters: Số lượng keys ước tính (để tối ưu Bloom Filter).
-		// Nên đặt gấp 10 lần số lượng key thực tế mong muốn.
-		NumCounters: 1e7,
-		// MaxCost: Giới hạn bộ nhớ tối đa (ví dụ 1GB).
-		// Nếu vượt quá, Ristretto sẽ xóa item dựa trên độ quan trọng (TinyLFU).
-		MaxCost: 1 << 30, // 1GB (1024 * 1024 * 1024)
-		// BufferItems: Kích thước bộ đệm ghi. 64 là số mặc định tốt.
-		BufferItems: 64,
-	})
-	if err != nil {
-		panic(fmt.Errorf("failed to create ristretto cache: %w", err))
-	}
-
 	s := &ComputeServer{
 		workerChans: make([]chan *Job, numShares),
 		numShards:   numShares,
-		cache:       cache,
 	}
 
 	for i := 0; i < numShares; i++ {
@@ -123,29 +105,6 @@ func NewComputeServer(db *sql.DB) *ComputeServer {
 
 var ChangePoolJob bool = false
 var TotalMaxProcessOnWorker int = 80
-
-func AddCacheQueryResult(cache *ristretto.Cache, query string, result *pb.TestHTTP3Response) {
-	cache.Set(query, result, 1)
-	cache.Wait()
-}
-
-func GetCacheQueryResult(cache *ristretto.Cache, query string) (*pb.TestHTTP3Response, bool) {
-	value, found := cache.Get(query)
-	if !found {
-		return nil, false
-	}
-
-	resp, ok := value.(*pb.TestHTTP3Response)
-	if !ok {
-		return nil, false
-	}
-
-	return resp, true
-}
-
-func RemoveCacheQueryResult(cache *ristretto.Cache, query string) {
-	cache.Del(query)
-}
 
 func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 	// 1. Kho chứa riêng (Local Queue) để worker tự sắp xếp
@@ -226,7 +185,7 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 		}
 
 		// ==========================================
-		// PHA 4: KIỂM TRA & CACHE (CHECK & CACHE)
+		// PHA 4: KIỂM TRA (CHECK)
 		// ==========================================
 
 		// 1. Kiểm tra khách có hủy kèo chưa (Context Done)
@@ -237,19 +196,8 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 		default:
 		}
 
-		// 2. Kiểm tra Cache Ristretto
-		// Key ví dụ: "query:<query_id>"
-		cacheKey := job.CT.GetQuerySQL()
-		if val, found := s.cache.Get(cacheKey); found {
-			// CACHE HIT!
-			if resp, ok := val.(*pb.TestHTTP3Response); ok {
-				s.send(job, resp, nil)
-				continue // Xong việc này, chuyển sang việc kế tiếp ngay
-			}
-		}
-
 		// ==========================================
-		// PHA 5: THỰC THI (EXECUTION) - CACHE MISS
+		// PHA 5: THỰC THI (EXECUTION)
 		// ==========================================
 
 		// Giả lập xử lý nặng (DB Query, Calculation...)
@@ -271,10 +219,6 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 			ReceivedSize: payloadSize,
 			Records:      records,
 		}
-
-		// 3. Lưu vào Cache với TTL (Ví dụ: 5 giây)
-		// Cost = 1 (hoặc size của object). TTL = 5s.
-		s.cache.SetWithTTL(cacheKey, resp, 1, 5*time.Second)
 
 		// Gửi trả kết quả
 		s.send(job, resp, nil)

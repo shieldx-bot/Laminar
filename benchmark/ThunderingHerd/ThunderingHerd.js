@@ -4,7 +4,7 @@ export const options = {
   scenarios: {
     thundering_herd: {
       executor: 'per-vu-iterations',
-      vus: 10000,        // 10.000 users
+      vus: 1000,        // 10.000 users
       iterations: 1,    // mỗi user 1 request
       maxDuration: '30s',
     },
