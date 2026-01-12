@@ -29,7 +29,7 @@ func CalculateETj(metrix map[string]interface{}) float64 {
 	var ETj float64
 	var TLi float64
 	TLi = float64(metrix["TLi"].(int64))
-	ETj = (TLi) / float64(metrix["Penumj"].(int64)) * float64(metrix["Pemips"].(int64))
+	ETj = (TLi) / (float64(metrix["Penumj"].(int64)) * float64(metrix["Pemips"].(int64)))
 	return ETj
 }
 
@@ -63,6 +63,6 @@ func CalculateLB(metrix map[string]interface{}) int {
 
 func CalculateTLD(metrix map[string]interface{}) float64 {
 	var TLD float64
-	TLD = float64(metrix["TimeDoneTask"].(int64)) * float64(metrix["Pemips"].(int64))
+	TLD = float64(metrix["TimeDoneTask"].(int64)) * float64(metrix["TLi"].(int64))
 	return TLD
 }
