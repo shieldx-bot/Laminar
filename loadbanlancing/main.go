@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,9 +19,18 @@ type VPS struct {
 	p  float64
 }
 
-var ListVPS = []VPS{}
+var ListVPS = []VPS{
+	{IP: "", S: 0, p: 0},
+	{IP: "", S: 0, p: 0},
+	{IP: "", S: 0, p: 0},
+}
+var RamdomVPS bool = true
+
+var listVPSMu sync.RWMutex
 
 func hasVPS(ip string) bool {
+	listVPSMu.RLock()
+	defer listVPSMu.RUnlock()
 	for _, v := range ListVPS {
 		if v.IP == ip {
 			return true
@@ -46,11 +56,12 @@ var WeightMetrix = struct {
 }
 
 type MetrixCalculateP struct {
-	S     float64 `json:"s"`
-	Gj    float64 `json:"gj"`
-	Lvmj  float64 `json:"lvmj"`
-	LB    int     `json:"lb"`
-	Queue int     `json:"queue"`
+	S                float64 `json:"s"`
+	Gj               float64 `json:"gj"`
+	Lvmj             float64 `json:"lvmj"`
+	LB               int     `json:"lb"`
+	Queue            int     `json:"queue"`
+	LearningScoreAll float64 `json:"learning_score_all"`
 }
 
 func CalculateP(data MetrixCalculateP) float64 {
@@ -59,9 +70,9 @@ func CalculateP(data MetrixCalculateP) float64 {
 	var coalesce_penalty_j float64
 	coalesce_penalty = float64(data.Queue) / float64(WeightMetrix.Max_queue)
 	coalesce_penalty_j = 1 - WeightMetrix.k*coalesce_penalty
-	var learning_score_all float64
-	for _, v := range ListVPS {
-		learning_score_all += v.p
+	learning_score_all := data.LearningScoreAll
+	if learning_score_all <= 0 {
+		learning_score_all = 1
 	}
 	var learning_score float64
 	learning_score = data.S * data.Gj * data.Lvmj * float64(data.LB) / learning_score_all
@@ -83,9 +94,46 @@ func main() {
 			return
 		}
 
+		if !RamdomVPS {
+			c.JSON(503, gin.H{"error": "load balancer disabled"})
+			return
+		}
+
+		// 1️⃣ đọc snapshot VPS (RLock)
+		listVPSMu.RLock()
+		if len(ListVPS) == 0 {
+			listVPSMu.RUnlock()
+			c.JSON(503, gin.H{"error": "no vps available"})
+			return
+		}
+
+		var selected *VPS
+
+		// ưu tiên VPS chưa có score
+		for i := range ListVPS {
+			if ListVPS[i].p == 0.0 || ListVPS[i].S == 0.0 {
+				selected = &ListVPS[i]
+				break
+			}
+		}
+
+		// nếu không có → chọn p lớn nhất
+		if selected == nil {
+			selected = &ListVPS[0]
+			for i := 1; i < len(ListVPS); i++ {
+				if ListVPS[i].p > selected.p {
+					selected = &ListVPS[i]
+				}
+			}
+		}
+
+		ip := selected.IP
+		listVPSMu.RUnlock()
+
+		// 2️⃣ gửi request (KHÔNG LOCK)
 		req, err := http.NewRequest(
 			http.MethodPost,
-			"http://23.124.22.44:8082/api/test-http3",
+			"http://"+ip+":8082/api/test-http3",
 			bytes.NewReader(bodyBytes),
 		)
 		if err != nil {
@@ -93,7 +141,6 @@ func main() {
 			return
 		}
 
-		// copy headers (rất quan trọng)
 		req.Header = c.Request.Header.Clone()
 		req.Header.Set("Content-Length", strconv.Itoa(len(bodyBytes)))
 
@@ -146,63 +193,75 @@ func main() {
 			"VMbw":         in.VMbw,
 			"IPVM":         in.IPVM,
 			"TotalOnQueue": in.TotalOnQueue,
+			"Queue":        int(in.TotalOnQueue),
 		}
-		_, err := agent.AgentMain(Metrix)
+		ag, err := agent.AgentMain(Metrix)
 
 		if err != nil {
 			c.JSON(500, gin.H{"error": "agent processing failed"})
 			return
 		}
-		if !hasVPS(in.IPVM) {
-			ListVPS = append(ListVPS, VPS{IP: in.IPVM, S: 0, p: 0})
-		} else {
-			for i, v := range ListVPS {
-				if v.IP == in.IPVM {
-					if v.p == 0.0 {
-						var S0 float64
-						S0 = float64(Metrix["Penumj"].(int64))*float64(Metrix["Pemips"].(int64)) + Metrix["VMbw"].(float64)
-						ListVPS[i].S = S0
+		Metrix["Gj"] = ag.Gj
+		Metrix["Lvmj"] = ag.Lvmj
+		Metrix["LB"] = ag.LB
 
-						gj, _ := Metrix["Gj"].(float64)
-						lvmj, _ := Metrix["Lvmj"].(float64)
-						lb, _ := Metrix["LB"].(int)
-						Queue, _ := Metrix["Queue"].(int)
-
-						var p float64
-						p = CalculateP(MetrixCalculateP{
-							S:     S0,
-							Gj:    gj,
-							Lvmj:  lvmj,
-							LB:    lb,
-							Queue: Queue,
-						})
-						ListVPS[i].p = p
-
-					} else {
-						var Snew float64
-						timeDoneTask := float64(in.TimeDoneTask)
-						if timeDoneTask <= 0 {
-							timeDoneTask = 1
-						}
-						gj, _ := Metrix["Gj"].(float64)
-						lvmj, _ := Metrix["Lvmj"].(float64)
-						lb, _ := Metrix["LB"].(int)
-						Queue, _ := Metrix["Queue"].(int)
-						Snew = (1-ListVPS[i].p)*ListVPS[i].S + (1.0/timeDoneTask)*1e-9
-						ListVPS[i].S = Snew
-						var p float64
-						p = CalculateP(MetrixCalculateP{
-							S:     Snew,
-							Gj:    gj,
-							Lvmj:  lvmj,
-							LB:    lb,
-							Queue: Queue,
-						})
-						ListVPS[i].p = p
-					}
-				}
+		listVPSMu.Lock()
+		idx := -1
+		for i := range ListVPS {
+			if ListVPS[i].IP == in.IPVM {
+				idx = i
+				break
 			}
 		}
+		if idx == -1 {
+			ListVPS = append(ListVPS, VPS{IP: in.IPVM, S: 0, p: 0})
+			idx = len(ListVPS) - 1
+		}
+
+		learningScoreAll := 0.0
+		for _, v := range ListVPS {
+			learningScoreAll += v.p
+		}
+
+		gj := ag.Gj
+		lvmj := ag.Lvmj
+		lb := ag.LB
+		Queue := int(in.TotalOnQueue)
+
+		if ListVPS[idx].p == 0.0 {
+			S0 := float64(in.Penumj)*float64(in.Pemips) + float64(in.VMbw)
+			ListVPS[idx].S = S0
+
+			p := CalculateP(MetrixCalculateP{
+				S:                S0,
+				Gj:               gj,
+				Lvmj:             lvmj,
+				LB:               lb,
+				Queue:            Queue,
+				LearningScoreAll: learningScoreAll,
+			})
+			ListVPS[idx].p = p
+		} else {
+			timeDoneTask := float64(in.TimeDoneTask)
+			if timeDoneTask <= 0 {
+				timeDoneTask = 1
+			}
+			eps := 1e-9
+			reward := 1.0 / (timeDoneTask + eps)
+			Snew := (1-ListVPS[idx].p)*ListVPS[idx].S + ListVPS[idx].p*reward
+			ListVPS[idx].S = Snew
+
+			p := CalculateP(MetrixCalculateP{
+				S:                Snew,
+				Gj:               gj,
+				Lvmj:             lvmj,
+				LB:               lb,
+				Queue:            Queue,
+				LearningScoreAll: learningScoreAll,
+			})
+			ListVPS[idx].p = p
+		}
+		listVPSMu.Unlock()
 
 		// Xử lý metrics ở đây (ví dụ: lưu vào cơ sở dữ liệu, in ra console, v.v.)
 		// Hiện tại chỉ in ra console
