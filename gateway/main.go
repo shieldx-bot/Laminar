@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/dgraph-io/ristretto"
@@ -218,7 +219,6 @@ func main() {
 
 	})
 	router.POST("/http3-proxy", func(c *gin.Context) {
-		TotalOnQueue += 1
 		var reqBody map[string]interface{}
 		var NumberTask int64
 		MetrixFirst := metrix.MetrixFirstFunction()
@@ -226,6 +226,8 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
 			return
 		}
+		atomic.AddInt64(&TotalOnQueue, 1)
+		defer atomic.AddInt64(&TotalOnQueue, -1)
 
 		// Mô phỏng logic xử lý công việc với các tác vụ khác nhau
 
@@ -271,18 +273,16 @@ func main() {
 				"TTj":           MetrixEnd.TTj,
 				"TLi":           TotalTimeTask * (NumberTask * int64(MetrixEnd.Pemips)),
 				"IPVM":          c.ClientIP(),
-				"TotalOnQueue":  TotalOnQueue,
+				"TotalOnQueue":  atomic.LoadInt64(&TotalOnQueue),
 				"IFS":           MetrixEnd.IFS,
 				"VMbw":          MetrixEnd.VMbw,
 			},
 		}
 		select {
 		case jobChan <- job:
-			TotalOnQueue -= 1
 			c.JSON(http.StatusOK, gin.H{"status": "queued", "total_jobs": len(store)})
 			return
 		default:
-			TotalOnQueue -= 1
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Server busy"})
 		}
 
