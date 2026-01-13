@@ -163,10 +163,57 @@ func main() {
 			QuerySQL string `json:"QuerySQL"`
 			Payload  string `json:"Payload"`
 		}
+
+		// 1. Bind JSON failure -> return immediately (no metrics)
 		if err := c.BindJSON(&jsonReq); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+
+		// --- START METRICS & QUEUE TRACKING ---
+		atomic.AddInt64(&TotalOnQueue, 1)
+		defer atomic.AddInt64(&TotalOnQueue, -1) // Ensure decrement on exit
+
+		MetrixFirst := metrix.MetrixFirstFunction()
+		TimeStart := time.Now()
+		var NumberTask int64 = 1
+
+		// Use defer to report metrics regardless of Cache HIT, MISS, or Error
+		defer func() {
+			MetrixEnd := metrix.MetrixEndFunction()
+			TotalTimeTask := time.Since(TimeStart).Milliseconds()
+			if TotalTimeTask == 0 {
+				TotalTimeTask = 1
+			}
+
+			cores := runtime.NumCPU()
+			job := &Job{
+				Ctx: c.Request.Context(),
+				Metrix: map[string]interface{}{
+					"TimeStartSend": time.Now().UnixNano() / int64(time.Millisecond),
+					"TimeDoneTask":  MetrixEnd.TimeEnd - int64(MetrixFirst.TimeStart), // System time delta
+					"Penumj":        cores,
+					"Pemips":        MetrixEnd.Pemips,
+					"NumberTask":    NumberTask,
+					"TTj":           MetrixEnd.TTj,
+					"TLi":           TotalTimeTask * int64(MetrixEnd.Pemips), // Workload Estimate
+					"IPVM":          c.ClientIP(),
+					"TotalOnQueue":  atomic.LoadInt64(&TotalOnQueue),
+					"IFS":           MetrixEnd.IFS,
+					"VMbw":          MetrixEnd.VMbw,
+				},
+			}
+
+			// Non-blocking send to jobChan
+			select {
+			case jobChan <- job:
+				// Queued successfully
+			default:
+				// Queue full - ignore metric but DO NOT fail request
+				fmt.Println("Warning: jobChan full, dropping metric")
+			}
+		}()
+		// --- END METRICS LOCK ---
 
 		key := jsonReq.QuerySQL
 		if key == "" {
@@ -177,10 +224,11 @@ func main() {
 		if val, ok := queryCache.Get(key); ok {
 			if cachedBytes, ok := val.([]byte); ok {
 				c.Data(http.StatusOK, "application/json", cachedBytes)
-				return
+				return // defer will run here (Metric Reported: Cache Hit)
 			}
 		}
 
+		// 2) SingleFlight (Cache Miss)
 		resAny, err, _ := testHTTP3SingleFlight.Do(key, func() (interface{}, error) {
 			// Double-check cache inside singleflight to avoid duplicate work
 			if val, ok := queryCache.Get(key); ok {
@@ -201,13 +249,14 @@ func main() {
 				return nil, err
 			}
 			buf, _ := json.Marshal(resp)
-			// 2) Store into gateway cache (TTL 20s)
+			// Store into gateway cache (TTL 20s)
 			queryCache.SetWithTTL(key, buf, 1, 20*time.Second)
 			return resp, nil
 		})
+
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("TestHTTP3: %v", err)})
-			return
+			return // defer will run here (Metric Reported: Error)
 		}
 
 		resp := resAny.(*pb.TestHTTP3Response)
@@ -218,7 +267,6 @@ func main() {
 			"Records":      resp.GetRecords(),
 			"ReceivedSize": resp.GetReceivedSize(),
 		})
-
 	})
 	router.POST("/http3-proxy", func(c *gin.Context) {
 		var reqBody map[string]interface{}
