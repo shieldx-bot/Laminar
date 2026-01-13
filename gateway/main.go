@@ -79,7 +79,7 @@ func main() {
 
 	grpcAddr := os.Getenv("LAMINAR_GRPC_ADDR")
 	if grpcAddr == "" {
-		grpcAddr = "34.177.108.132:50051"
+		grpcAddr = "34.177.91.6:50051"
 	}
 	grpcConn, err := grpc.Dial(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -100,7 +100,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	router.GET("/ping-service-go", func(c *gin.Context) {
-		fetchURL := "http://34.177.108.132:8081/api/ping" // Thay đổi URL theo yêu cầu
+		fetchURL := "http://34.177.91.6:8081/api/ping" // Thay đổi URL theo yêu cầu
 		resp, err := http.Get(fetchURL)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch from external host"})
@@ -127,7 +127,7 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		addr := "http://34.177.108.132:8081/api/naive"
+		addr := "http://34.177.91.6:8081/api/naive"
 		payload := map[string]string{
 			"QueryId":  jsonReq.QueryId,
 			"QuerySQL": jsonReq.QuerySQL,

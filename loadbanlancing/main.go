@@ -20,9 +20,8 @@ type VPS struct {
 }
 
 var ListVPS = []VPS{
-	{IP: "", S: 0, p: 0},
-	{IP: "", S: 0, p: 0},
-	{IP: "", S: 0, p: 0},
+	{IP: "34.87.59.164 ", S: 0, p: 0},
+	{IP: "	34.158.51.160 ", S: 0, p: 0},
 }
 var RamdomVPS bool = true
 
