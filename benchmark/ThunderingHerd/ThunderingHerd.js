@@ -4,7 +4,7 @@ export const options = {
   scenarios: {
     thundering_herd: {
       executor: 'per-vu-iterations',
-      vus: 10000,        // 2.000 users
+      vus: 10000,        // 10,000 users
       iterations: 1,    // mỗi user 1 request
       maxDuration: '30s',
     },
@@ -25,7 +25,7 @@ export default function () {
     },
   };
 
-  const res = http.post('http://34.87.152.48:8081/TestHTTP3', payload, params); 
+  const res = http.post('http://34.87.132.91:8083/load-test-http3', payload, params); 
   
   if (res.status !== 200) {
     console.error(`Error: Status ${res.status}. Body: ${res.body}`);

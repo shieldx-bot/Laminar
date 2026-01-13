@@ -39,25 +39,32 @@ var TotalOnQueue int64 = 0
 func startWorker() {
 	go func() {
 		for job := range jobChan {
-			store = append(store, job.Metrix)
-			time.Sleep(5000 * time.Millisecond) // Simulate processing time
+			// Don't store indefinitely, it leaks memory if not used
+			// store = append(store, job.Metrix)
+
+			// REMOVE simulated delay. Metrics must be sent ASAP for real-time LB.
+			// time.Sleep(5000 * time.Millisecond)
 
 			body, err := json.Marshal(job.Metrix)
 			if err != nil {
 				continue
 			}
 
-			req, err := http.NewRequest(http.MethodPost, "http://34.87.132.91:8083/receive-metrics", bytes.NewReader(body))
+			// Use a shorter timeout for metric sending
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://34.87.132.91:8083/receive-metrics", bytes.NewReader(body))
 			if err != nil {
+				cancel()
 				continue
 			}
 			req.Header.Set("Content-Type", "application/json")
 
 			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				continue
+			if err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
 			}
-			_ = resp.Body.Close()
+			cancel()
 		}
 	}()
 }
