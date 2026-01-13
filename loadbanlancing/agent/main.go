@@ -1,5 +1,7 @@
 package agent
 
+import "fmt"
+
 var (
 	SLA float64 = 1.5 // 1.5 seconds to accommodate simulated tasks
 )
@@ -53,6 +55,8 @@ func CalculateLB(metrix map[string]interface{}) int {
 	var MaxCapity float64
 	MaxCapity = (SLA * 1000) * float64(metrix["Pemips"].(int64))
 	TLD = float64(CalculateTLD(metrix)) // milliseconds
+	fmt.Printf("TLD : %f\n", TLD)
+	fmt.Printf("MaxCapity : %f\n", MaxCapity)
 	if TLD < MaxCapity {
 		LB = 1
 	} else {
@@ -63,6 +67,6 @@ func CalculateLB(metrix map[string]interface{}) int {
 
 func CalculateTLD(metrix map[string]interface{}) float64 {
 	var TLD float64
-	TLD = float64(metrix["TimeDoneTask"].(int64)) * float64(metrix["TLi"].(int64))
+	TLD = float64(metrix["TimeDoneTask"].(int64)) + float64(metrix["TLi"].(int64))
 	return TLD
 }
