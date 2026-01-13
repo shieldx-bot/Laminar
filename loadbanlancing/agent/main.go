@@ -1,7 +1,7 @@
 package agent
 
 var (
-	SLA float64 = 0.5 // 0.3 seconds
+	SLA float64 = 1.5 // 1.5 seconds to accommodate simulated tasks
 )
 
 type Agent struct {
@@ -51,7 +51,7 @@ func CalculateLB(metrix map[string]interface{}) int {
 	var LB int
 	var TLD float64
 	var MaxCapity float64
-	MaxCapity = SLA * float64(metrix["Pemips"].(int64))
+	MaxCapity = (SLA * 1000) * float64(metrix["Pemips"].(int64))
 	TLD = float64(CalculateTLD(metrix)) // milliseconds
 	if TLD < MaxCapity {
 		LB = 1
