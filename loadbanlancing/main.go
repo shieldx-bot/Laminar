@@ -132,7 +132,7 @@ func main() {
 		// 2️⃣ gửi request (KHÔNG LOCK)
 		req, err := http.NewRequest(
 			http.MethodPost,
-			"http://"+ip+":8082/api/test-http3",
+			"http://"+ip+":8081/TestHTTP3",
 			bytes.NewReader(bodyBytes),
 		)
 		if err != nil {
@@ -240,6 +240,7 @@ func main() {
 				LearningScoreAll: learningScoreAll,
 			})
 			ListVPS[idx].p = p
+			fmt.Println("Received p: \n ", p)
 		} else {
 			timeDoneTask := float64(in.TimeDoneTask)
 			if timeDoneTask <= 0 {
@@ -259,12 +260,15 @@ func main() {
 				LearningScoreAll: learningScoreAll,
 			})
 			ListVPS[idx].p = p
+			fmt.Println("Received p: \n ", p)
+
 		}
 		listVPSMu.Unlock()
 
 		// Xử lý metrics ở đây (ví dụ: lưu vào cơ sở dữ liệu, in ra console, v.v.)
 		// Hiện tại chỉ in ra console
 		fmt.Println("Received metrics: \n ", Metrix)
+
 		c.JSON(200, gin.H{"status": "metrics received"})
 	})
 
