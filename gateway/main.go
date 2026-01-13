@@ -273,7 +273,7 @@ func main() {
 				"Pemips":        MetrixEnd.Pemips,
 				"NumberTask":    NumberTask,
 				"TTj":           MetrixEnd.TTj,
-				"TLi":           TotalTimeTask * (NumberTask * int64(MetrixEnd.Pemips)),
+				"TLi":           TotalTimeTask * int64(MetrixEnd.Pemips),
 				"IPVM":          c.ClientIP(),
 				"TotalOnQueue":  atomic.LoadInt64(&TotalOnQueue),
 				"IFS":           MetrixEnd.IFS,
