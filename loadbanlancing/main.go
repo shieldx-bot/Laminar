@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"github/shieldx-bot/loadbanlacing/agent"
 	"io"
 	"math/rand"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -154,29 +152,9 @@ func main() {
 		ip := selected.IP
 		listVPSMu.RUnlock()
 
-		// 2️⃣ gửi request (KHÔNG LOCK)
-		req, err := http.NewRequest(
-			http.MethodPost,
-			"http://"+ip+":8081/TestHTTP3",
-			bytes.NewReader(bodyBytes),
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "create request failed"})
-			return
-		}
-
-		req.Header = c.Request.Header.Clone()
-		req.Header.Set("Content-Length", strconv.Itoa(len(bodyBytes)))
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			c.JSON(502, gin.H{"error": "fetch failed"})
-			return
-		}
-		defer resp.Body.Close()
-
-		c.Status(resp.StatusCode)
-		io.Copy(c.Writer, resp.Body)
+		// 2️⃣ Redirect to Gateway (HTTP 307 - Preserve Method & Body)
+		targetURL := fmt.Sprintf("http://%s:8081/TestHTTP3", ip)
+		c.Redirect(http.StatusTemporaryRedirect, targetURL)
 	})
 
 	router.POST("/receive-metrics", func(c *gin.Context) {
