@@ -47,7 +47,7 @@ func startWorker() {
 				continue
 			}
 
-			req, err := http.NewRequest(http.MethodPost, "http://localhost:8083/receive-metrics", bytes.NewReader(body))
+			req, err := http.NewRequest(http.MethodPost, "http://34.87.132.91:8083/receive-metrics", bytes.NewReader(body))
 			if err != nil {
 				continue
 			}
