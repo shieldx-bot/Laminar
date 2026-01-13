@@ -132,7 +132,7 @@ func main() {
 		// 2️⃣ gửi request (KHÔNG LOCK)
 		req, err := http.NewRequest(
 			http.MethodPost,
-			"http://"+ip+":8081/TestHTTP3",
+			"http://"+ip+":8081/http3-proxy",
 			bytes.NewReader(bodyBytes),
 		)
 		if err != nil {
