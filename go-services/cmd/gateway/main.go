@@ -59,7 +59,7 @@ func (s *server) TestHTTP3(ctx context.Context, req *pb.TestHTTP3Request) (*pb.T
 
 func main() {
 	// 2. KHỞI TẠO KẾT NỐI DB MỘT LẦN DUY NHẤT LÚC STARTUP
-	connStr := "host=34.177.108.132 port=5432 user=postgres password=Vananh12345@ dbname=laminar sslmode=disable"
+	connStr := "host=34.177.91.6 port=5432 user=postgres password=Vananh12345@ dbname=laminar sslmode=disable"
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		panic(err)

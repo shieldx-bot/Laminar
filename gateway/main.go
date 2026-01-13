@@ -79,7 +79,9 @@ func main() {
 
 	grpcAddr := os.Getenv("LAMINAR_GRPC_ADDR")
 	if grpcAddr == "" {
+		// grpcAddr = "34.177.91.6:50051"
 		grpcAddr = "34.177.91.6:50051"
+
 	}
 	grpcConn, err := grpc.Dial(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
