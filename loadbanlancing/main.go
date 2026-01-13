@@ -247,8 +247,12 @@ func main() {
 				timeDoneTask = 1
 			}
 			eps := 1e-9
+			// Reward is speed (1/time).
 			reward := 1.0 / (timeDoneTask + eps)
-			Snew := (1-ListVPS[idx].p)*ListVPS[idx].S + ListVPS[idx].p*reward
+
+			// Use a fixed learning rate instead of 'p' to avoid instability
+			alpha := 0.2
+			Snew := (1-alpha)*ListVPS[idx].S + alpha*reward
 			ListVPS[idx].S = Snew
 
 			p := CalculateP(MetrixCalculateP{
