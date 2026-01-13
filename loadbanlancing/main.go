@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"github/shieldx-bot/loadbanlacing/agent"
-	"io"
 	"math/rand"
 	"net/http"
 	"sync"
@@ -86,11 +85,11 @@ func main() {
 	})
 
 	router.POST("/load-test-http3", func(c *gin.Context) {
-		bodyBytes, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			c.JSON(400, gin.H{"error": "cannot read body"})
-			return
-		}
+		// bodyBytes, err := io.ReadAll(c.Request.Body)
+		// if err != nil {
+		// 	c.JSON(400, gin.H{"error": "cannot read body"})
+		// 	return
+		// }
 
 		if !RamdomVPS {
 			c.JSON(503, gin.H{"error": "load balancer disabled"})
