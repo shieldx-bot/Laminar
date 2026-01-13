@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github/shieldx-bot/loadbanlacing/agent"
 	"io"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"sync"
@@ -108,20 +109,44 @@ func main() {
 
 		var selected *VPS
 
-		// ưu tiên VPS chưa có score
+		// ưu tiên VPS chưa có score (nhưng chọn Random trong số đó để tránh dồn toa)
+		var candidates []*VPS
 		for i := range ListVPS {
 			if ListVPS[i].p == 0.0 || ListVPS[i].S == 0.0 {
-				selected = &ListVPS[i]
-				break
+				candidates = append(candidates, &ListVPS[i])
 			}
 		}
 
-		// nếu không có → chọn p lớn nhất
-		if selected == nil {
-			selected = &ListVPS[0]
-			for i := 1; i < len(ListVPS); i++ {
-				if ListVPS[i].p > selected.p {
-					selected = &ListVPS[i]
+		if len(candidates) > 0 {
+			// Chọn ngẫu nhiên một candidate chưa có score
+			idx := rand.Intn(len(candidates))
+			selected = candidates[idx]
+		} else {
+			// Weighted Random Selection (ngẫu nhiên có trọng số)
+			// Tránh "Winner Take All" (chỉ chọn server tốt nhất) gây dao động
+			var totalP float64
+			for i := range ListVPS {
+				totalP += ListVPS[i].p
+			}
+
+			if totalP > 0 {
+				r := rand.Float64() * totalP
+				for i := range ListVPS {
+					r -= ListVPS[i].p
+					if r <= 0 {
+						selected = &ListVPS[i]
+						break
+					}
+				}
+			}
+
+			// Fallback (nếu lỗi tính toán) -> Chọn mốt p lớn nhất
+			if selected == nil {
+				selected = &ListVPS[0]
+				for i := 1; i < len(ListVPS); i++ {
+					if ListVPS[i].p > selected.p {
+						selected = &ListVPS[i]
+					}
 				}
 			}
 		}
