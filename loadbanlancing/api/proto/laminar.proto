@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package laminar;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "./pb";
+
+// Service định nghĩa các phương thức giao tiếp chính
+service LaminarGateway {
+ 
+  rpc TestHTTP3 (RequestToBalancer) returns (ResponseToBalancer);
+
+  rpc PingPong (PingRequest) returns (PingResponse);
+
+  rpc CallBack (CallBackRequest) returns (CallBackResponse);
+
+}
+ 
+
+    // const payload = new Uint8Array(10 * 1024 * 1024); // 10MB
+
+
+message RequestToBalancer {
+   string QueryId = 1;
+   string QuerySQL = 3; 
+   bytes payload = 2;
+   string Urlcallback = 4;
+   string Action  = 5;
+}
+message ResponseToBalancer {
+   string status = 1;
+}
+
+ 
+
+
+message  CallBackRequest { 
+   string QueryId = 1;
+   string QuerySQL = 3; 
+   bytes payload = 2;
+   string Urlcallback = 4;
+   string Action = 5;
+}
+
+message  CallBackResponse { 
+    string QueryId = 1; 
+    string QuerySQL =3; 
+    repeated google.protobuf.Struct records = 4;
+    string Urlcallback = 5;
+    string Action = 6;
+}
+
+
+
+
+message PingRequest {
+  string message = 1;
+}
+
+message PingResponse {
+  string message = 1;
+}
