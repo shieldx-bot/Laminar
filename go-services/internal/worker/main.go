@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"hash/fnv"
 	"runtime"
+	"time"
 
+	"github.com/dgraph-io/ristretto"
 	_ "github.com/lib/pq"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	pb "github/shieldx-bot/laminar/pb"
@@ -30,6 +33,8 @@ type ComputeServer struct {
 	pb.UnimplementedLaminarGatewayServer
 	workerChans []chan *Job
 	numShards   int
+	cache       *ristretto.Cache
+	cacheTTL    time.Duration
 }
 
 type ExampleRecord struct {
@@ -90,9 +95,20 @@ func ExecuteSQLQery(query string, db *sql.DB) ([]*structpb.Struct, error) {
 func NewComputeServer(db *sql.DB) *ComputeServer {
 	numShares := runtime.NumCPU()
 
+	cache, err := ristretto.NewCache(&ristretto.Config{
+		NumCounters: 1e7,
+		MaxCost:     1 << 30,
+		BufferItems: 64,
+	})
+	if err != nil {
+		cache = nil
+	}
+
 	s := &ComputeServer{
 		workerChans: make([]chan *Job, numShares),
 		numShards:   numShares,
+		cache:       cache,
+		cacheTTL:    20 * time.Second,
 	}
 
 	for i := 0; i < numShares; i++ {
@@ -200,16 +216,36 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 		// PHA 5: THỰC THI (EXECUTION)
 		// ==========================================
 
+		payloadSize := int32(0)
+		if job.CT != nil {
+			payloadSize = int32(len(job.CT.Payload))
+		}
+
+		queryKey := ""
+		if job.CT != nil {
+			queryKey = job.CT.GetQuerySQL()
+		}
+
+		if s.cache != nil && s.cacheTTL > 0 && queryKey != "" {
+			if val, ok := s.cache.Get(queryKey); ok {
+				if cachedBytes, ok := val.([]byte); ok {
+					var cachedResp pb.TestHTTP3Response
+					if err := proto.Unmarshal(cachedBytes, &cachedResp); err == nil {
+						cachedResp.QueryId = job.QueryId
+						cachedResp.ReceivedSize = payloadSize
+						s.send(job, &cachedResp, nil)
+						continue
+					}
+				}
+			}
+		}
+
 		// Giả lập xử lý nặng (DB Query, Calculation...)
 		// time.Sleep(10 * time.Millisecond) // Uncomment để test delay
 		records, err := ExecuteSQLQery(job.CT.GetQuerySQL(), db)
 		if err != nil {
 			s.send(job, nil, err)
 			continue
-		}
-		payloadSize := int32(0)
-		if job.CT != nil {
-			payloadSize = int32(len(job.CT.Payload))
 		}
 
 		// Tạo kết quả
@@ -218,6 +254,16 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 			QueryId:      job.QueryId,
 			ReceivedSize: payloadSize,
 			Records:      records,
+		}
+
+		if s.cache != nil && s.cacheTTL > 0 && queryKey != "" {
+			cacheResp := &pb.TestHTTP3Response{
+				Status:  resp.Status,
+				Records: resp.Records,
+			}
+			if buf, err := proto.Marshal(cacheResp); err == nil {
+				s.cache.SetWithTTL(queryKey, buf, int64(len(buf)), s.cacheTTL)
+			}
 		}
 
 		// Gửi trả kết quả
@@ -242,7 +288,11 @@ func (s *ComputeServer) send(job *Job, resp *pb.TestHTTP3Response, err error) {
 func (s *ComputeServer) ExecuteQuery(ctx context.Context, req *pb.TestHTTP3Request) (*pb.TestHTTP3Response, error) {
 	// 1. Sharding Algorithm: Chọn Worker dựa trên QueryId
 	// Điều này đảm bảo cùng 1 QueryId luôn vào cùng 1 Worker -> Tăng Cache Hit
-	shardID := int(hashTenant(req.GetQueryId()) % uint32(s.numShards))
+	shardKey := req.GetQuerySQL()
+	if shardKey == "" {
+		shardKey = req.GetQueryId()
+	}
+	shardID := int(hashTenant(shardKey) % uint32(s.numShards))
 
 	job := &Job{
 		Ctx:      ctx,
