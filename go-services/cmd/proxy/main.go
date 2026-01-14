@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"database/sql"
 	pb "github/shieldx-bot/laminar/pb"
@@ -14,7 +15,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq" // Driver postgres
+	"golang.org/x/sync/singleflight"
 )
+
+var requestCoalescer singleflight.Group
 
 type server struct {
 	pb.UnimplementedLaminarGatewayServer
@@ -88,16 +92,28 @@ func main() {
 			QuerySQL: jsonReq.QuerySQL,
 			Payload:  []byte(jsonReq.Payload),
 		}
-		res, err := myServer.cs.ExecuteQuery(context.Background(), pbReq)
+
+		key := jsonReq.QuerySQL
+		if key == "" {
+			key = jsonReq.QueryId
+		}
+
+		resAny, err, _ := requestCoalescer.Do(key, func() (interface{}, error) {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+			defer cancel()
+			return myServer.cs.ExecuteQuery(ctx, pbReq)
+		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		res := resAny.(*pb.TestHTTP3Response)
+
 		c.Header("Cache-Control", "no-store")
 		c.JSON(http.StatusOK, gin.H{
 			"status":        res.Status,
-			"query_id":      res.QueryId,
-			"received_size": res.ReceivedSize,
+			"query_id":      jsonReq.QueryId,
+			"received_size": len(jsonReq.Payload),
 			"record_count":  len(res.Records),
 		})
 	})
@@ -120,16 +136,28 @@ func main() {
 			QueryId:  fmt.Sprintf("req_%d", id),
 			QuerySQL: fmt.Sprintf("SELECT id, username, email, password_hash, balance, is_active, created_at, updated_at FROM users WHERE id = %d", id),
 		}
-		res, err := myServer.cs.ExecuteQuery(context.Background(), pbReq)
+
+		key := pbReq.QuerySQL
+		if key == "" {
+			key = pbReq.QueryId
+		}
+
+		resAny, err, _ := requestCoalescer.Do(key, func() (interface{}, error) {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+			defer cancel()
+			return myServer.cs.ExecuteQuery(ctx, pbReq)
+		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		res := resAny.(*pb.TestHTTP3Response)
+
 		c.Header("Cache-Control", "no-store")
 		c.JSON(http.StatusOK, gin.H{
 			"status":        res.Status,
-			"query_id":      res.QueryId,
-			"received_size": res.ReceivedSize,
+			"query_id":      pbReq.QueryId,
+			"received_size": 0,
 			"record_count":  len(res.Records),
 		})
 	})
