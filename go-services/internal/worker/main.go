@@ -227,6 +227,8 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 					var cachedResp pb.CallBackResponse
 					if err := proto.Unmarshal(cachedBytes, &cachedResp); err == nil {
 						cachedResp.QueryId = job.QueryId
+						// Fix: Thêm Urlcallback vào response trả về từ Cache
+						cachedResp.Urlcallback = job.CT.GetUrlcallback()
 						s.send(job, &cachedResp, nil)
 						continue
 					}
