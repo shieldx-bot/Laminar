@@ -1,13 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
+	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"database/sql"
@@ -16,9 +15,10 @@ import (
 	wk "github/shieldx-bot/laminar/internal/worker"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq" // Driver postgres
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 var requestCoalescer singleflight.Group
@@ -95,38 +95,16 @@ func StartJobToCallBack() {
 		if job.RespChan != nil {
 			job.RespChan <- JobCallBackResult{Resp: res, Err: err}
 		}
-
-		// ==== Giữ lại logic gọi callback client (nếu có url) ====
-		url := job.Req.GetUrlcallback()
-		if strings.TrimSpace(url) == "" {
-			continue
+		var redisHost = os.Getenv("LAMINAR_REDIS_HOST")
+		var redisPort = os.Getenv("LAMINAR_REDIS_PORT")
+		rdb := redis.NewClient(&redis.Options{Addr: redisHost + ":" + redisPort})
+		ctx := context.Background()
+		b, _ := json.MarshalIndent(res, "", "  ")
+		if err := rdb.Publish(ctx, "query_done", b).Err(); err != nil {
+			log.Fatal(err)
 		}
-		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-			url = "http://" + url
-		}
-		url = strings.TrimRight(url, "/") + "/callback-query-client"
+		fmt.Printf("Callback Result for Key=%s: err=%v, resp=%s\n", key, err, string(b))
 
-		// Gửi request gốc (như code hiện tại). Nếu bạn muốn gửi cả "res" thì cần proto/endpoint hỗ trợ.
-		body, mErr := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(job.Req)
-		if mErr != nil {
-			continue
-		}
-
-		req, rErr := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-		if rErr != nil {
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, doErr := client.Do(req)
-		if doErr != nil {
-			continue
-		}
-		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		fmt.Printf("Sent request to callback client: %s, response status: %s, body: %s\n", url, resp.Status, strings.TrimSpace(string(b)))
 	}
 }
 
@@ -135,13 +113,24 @@ func init() {
 }
 
 func main() {
-	connStr := "host=34.177.108.132 port=5432 user=postgres password=Vananh12345@ dbname=laminar sslmode=disable"
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("Error loading .env file, proceeding with environment variables")
+	}
+	var host_database = os.Getenv("LAMINAR_DB_HOST")
+	var port_database = os.Getenv("LAMINAR_DB_PORT")
+	var user_database = os.Getenv("LAMINAR_DB_USER")
+	var password_database = os.Getenv("LAMINAR_DB_PASSWORD")
+	var name_database = os.Getenv("LAMINAR_DB_NAME")
+
+	fmt.Println("Starting Laminar Proxy Server...")
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", host_database, port_database, user_database, password_database, name_database)
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		panic(err)
 	}
 	defer db.Close()
-
+	//
 	db.SetMaxOpenConns(200)
 	db.SetMaxIdleConns(25)
 	db.SetConnMaxLifetime(0)
@@ -166,14 +155,13 @@ func main() {
 		c.JSON(200, gin.H{"message": "pong"})
 	})
 
-
 	router.POST("/router-backend", func(c *gin.Context) {
 		var json struct {
-			QueryId     string `json:"query_id"`
-			QuerySQL    string `json:"query_sql"`
-			Payload     string `json:"payload"`
-			Urlcallback string `json:"url_callback"`
-			Action      string `json:"action"`
+			QueryId     string `json:"QueryId"`
+			QuerySQL    string `json:"QuerySQL"`
+			Payload     string `json:"Payload"`
+			Urlcallback string `json:"Urlcallback"`
+			Action      string `json:"Action"`
 		}
 
 		if err := c.BindJSON(&json); err != nil {
@@ -188,7 +176,9 @@ func main() {
 
 		select {
 		case JobCallBackChan <- &JobCallBack{
-			Ctx: c.Request.Context(),
+			// Fix: Dùng context.Background() thay vì c.Request.Context()
+			// Vì request kết thúc ngay (fire-and-forget) nên Context của nó sẽ bị Cancel -> Worker bị lỗi context canceled
+			Ctx: context.Background(),
 			Key: key,
 			Req: &pb.CallBackRequest{
 				QueryId:     json.QueryId,
@@ -208,9 +198,9 @@ func main() {
 	})
 
 	port := os.Getenv("LAMINAR_PROXY_PORT")
-	if port == "" {
-		port = "8081"
-	}
+	// if port == "" {
+	// 	port = "8081"
+	// }
 	fmt.Printf("Starting server on :%s\n", port)
 	router.Run(":" + port)
 	_ = myServer // giữ nếu bạn còn dùng nơi khác; nếu không dùng nữa có thể xoá

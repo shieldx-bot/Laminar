@@ -244,8 +244,9 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 
 		// Tạo kết quả
 		resp := &pb.CallBackResponse{
-			QueryId: job.QueryId,
-			Records: records,
+			QueryId:     job.QueryId,
+			Records:     records,
+			Urlcallback: job.CT.GetUrlcallback(),
 		}
 
 		if s.cache != nil && s.cacheTTL > 0 && queryKey != "" {
@@ -315,8 +316,9 @@ func (s *ComputeServer) ExecuteQuery(ctx context.Context, req *pb.CallBackReques
 		}
 		originResp := result.Resp
 		return &pb.CallBackResponse{
-			QueryId: req.GetQueryId(),
-			Records: originResp.Records,
+			QueryId:     req.GetQueryId(),
+			Records:     originResp.Records,
+			Urlcallback: originResp.GetUrlcallback(),
 		}, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
