@@ -20,12 +20,12 @@ type Job struct {
 	Ctx      context.Context
 	QueryId  string
 	Action   string
-	CT       *pb.TestHTTP3Request
+	CT       *pb.CallBackRequest
 	RespChan chan *JobResult
 }
 
 type JobResult struct {
-	Resp *pb.TestHTTP3Response
+	Resp *pb.CallBackResponse
 	Err  error
 }
 
@@ -216,11 +216,6 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 		// PHA 5: THỰC THI (EXECUTION)
 		// ==========================================
 
-		payloadSize := int32(0)
-		if job.CT != nil {
-			payloadSize = int32(len(job.CT.Payload))
-		}
-
 		queryKey := ""
 		if job.CT != nil {
 			queryKey = job.CT.GetQuerySQL()
@@ -229,10 +224,9 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 		if s.cache != nil && s.cacheTTL > 0 && queryKey != "" {
 			if val, ok := s.cache.Get(queryKey); ok {
 				if cachedBytes, ok := val.([]byte); ok {
-					var cachedResp pb.TestHTTP3Response
+					var cachedResp pb.CallBackResponse
 					if err := proto.Unmarshal(cachedBytes, &cachedResp); err == nil {
 						cachedResp.QueryId = job.QueryId
-						cachedResp.ReceivedSize = payloadSize
 						s.send(job, &cachedResp, nil)
 						continue
 					}
@@ -249,16 +243,13 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 		}
 
 		// Tạo kết quả
-		resp := &pb.TestHTTP3Response{
-			Status:       "True",
-			QueryId:      job.QueryId,
-			ReceivedSize: payloadSize,
-			Records:      records,
+		resp := &pb.CallBackResponse{
+			QueryId: job.QueryId,
+			Records: records,
 		}
 
 		if s.cache != nil && s.cacheTTL > 0 && queryKey != "" {
-			cacheResp := &pb.TestHTTP3Response{
-				Status:  resp.Status,
+			cacheResp := &pb.CallBackResponse{
 				Records: resp.Records,
 			}
 			if buf, err := proto.Marshal(cacheResp); err == nil {
@@ -271,9 +262,9 @@ func (s *ComputeServer) startWorker(id int, jobChan <-chan *Job, db *sql.DB) {
 	}
 
 }
-func (s *ComputeServer) send(job *Job, resp *pb.TestHTTP3Response, err error) {
+func (s *ComputeServer) send(job *Job, resp *pb.CallBackResponse, err error) {
 	if resp == nil {
-		resp = &pb.TestHTTP3Response{Status: "Error", QueryId: job.QueryId}
+		resp = &pb.CallBackResponse{QueryId: job.QueryId}
 		if err == nil {
 			err = fmt.Errorf("nil response")
 		}
@@ -285,7 +276,7 @@ func (s *ComputeServer) send(job *Job, resp *pb.TestHTTP3Response, err error) {
 	job.RespChan <- &JobResult{Resp: resp, Err: err}
 }
 
-func (s *ComputeServer) ExecuteQuery(ctx context.Context, req *pb.TestHTTP3Request) (*pb.TestHTTP3Response, error) {
+func (s *ComputeServer) ExecuteQuery(ctx context.Context, req *pb.CallBackRequest) (*pb.CallBackResponse, error) {
 	// 1. Sharding Algorithm: Chọn Worker dựa trên QueryId
 	// Điều này đảm bảo cùng 1 QueryId luôn vào cùng 1 Worker -> Tăng Cache Hit
 	shardKey := req.GetQuerySQL()
@@ -323,11 +314,9 @@ func (s *ComputeServer) ExecuteQuery(ctx context.Context, req *pb.TestHTTP3Reque
 			return nil, result.Err
 		}
 		originResp := result.Resp
-		return &pb.TestHTTP3Response{
-			Status:       originResp.Status,
-			QueryId:      req.GetQueryId(),
-			Records:      originResp.Records,
-			ReceivedSize: originResp.ReceivedSize,
+		return &pb.CallBackResponse{
+			QueryId: req.GetQueryId(),
+			Records: originResp.Records,
 		}, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
