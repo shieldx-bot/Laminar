@@ -29,26 +29,12 @@ type ListCachesOnServer struct {
 }
 
 var ListVPS = []VPS{
-	{IP: "backend1", caches: []ListCachesOnServer{}},
-	{IP: "backend2", caches: []ListCachesOnServer{}},
-	{IP: "backend3", caches: []ListCachesOnServer{}},
-	{IP: "backend4", caches: []ListCachesOnServer{}},
-	{IP: "backend5", caches: []ListCachesOnServer{}},
-	{IP: "backend6", caches: []ListCachesOnServer{}},
-	{IP: "backend7", caches: []ListCachesOnServer{}},
-	{IP: "backend8", caches: []ListCachesOnServer{}},
-	{IP: "backend9", caches: []ListCachesOnServer{}},
-	{IP: "backend10", caches: []ListCachesOnServer{}},
-	{IP: "backend11", caches: []ListCachesOnServer{}},
-	{IP: "backend12", caches: []ListCachesOnServer{}},
-	{IP: "backend13", caches: []ListCachesOnServer{}},
-	{IP: "backend14", caches: []ListCachesOnServer{}},
-	{IP: "backend15", caches: []ListCachesOnServer{}},
-	{IP: "backend16", caches: []ListCachesOnServer{}},
-	{IP: "backend17", caches: []ListCachesOnServer{}},
-	{IP: "backend18", caches: []ListCachesOnServer{}},
-	{IP: "backend19", caches: []ListCachesOnServer{}},
-	{IP: "backend20", caches: []ListCachesOnServer{}},
+	{IP: "localhost:8081", caches: []ListCachesOnServer{}},
+	{IP: "localhost:8082", caches: []ListCachesOnServer{}},
+	{IP: "localhost:8083", caches: []ListCachesOnServer{}},
+	{IP: "localhost:8084", caches: []ListCachesOnServer{}},
+	{IP: "localhost:8085", caches: []ListCachesOnServer{}},
+	{IP: "localhost:8086", caches: []ListCachesOnServer{}},
 }
 
 var RamdomVPS bool = true
@@ -94,21 +80,37 @@ func removeCacheInVPS(ip string, queryKey string) {
 		}
 	}
 }
+
 func HasCacheInVPS(queryKey string) []string {
-	listVPSMu.RLock()
-	var result []string
-	for _, v := range ListVPS {
-		for _, c := range v.caches {
-			if time.Since(c.Timestamp) > 5*time.Minute {
-				removeCacheInVPS(v.IP, queryKey)
-			} else if c.queryKey == queryKey {
-				result = append(result, c.queryKey)
+	listVPSMu.Lock()
+	defer listVPSMu.Unlock()
+
+	var ips []string
+	now := time.Now()
+
+	for i := range ListVPS {
+		// purge expired + check hit
+		dst := ListVPS[i].caches[:0]
+		hasHit := false
+
+		for _, c := range ListVPS[i].caches {
+			if now.Sub(c.Timestamp) > 5*time.Minute {
+				continue // drop expired
 			}
+			if c.queryKey == queryKey {
+				hasHit = true
+			}
+			dst = append(dst, c)
 		}
 
+		ListVPS[i].caches = dst
+
+		if hasHit {
+			ips = append(ips, ListVPS[i].IP) // IMPORTANT: trả IP, không phải queryKey
+		}
 	}
 
-	return result
+	return ips
 }
 
 type Job struct {
@@ -145,14 +147,16 @@ func StartJobToBackendWorker() {
 			return
 		}
 		if job != nil {
-			// Xử lý job gửi đến backend
 			for _, ip := range job.IPbackend {
 				url := ip
 				if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 					url = "http://" + url
 				}
+				// NEW: đúng endpoint backend
+				url = strings.TrimRight(url, "/") + "/router-backend"
 
-				body, err := protojson.Marshal(job.Req)
+				// NEW: xuất field theo proto_name (snake_case) để match query_id, query_sql...
+				body, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(job.Req)
 				if err != nil {
 					continue
 				}
@@ -163,8 +167,14 @@ func StartJobToBackendWorker() {
 				}
 				req.Header.Set("Content-Type", "application/json")
 
+				client := &http.Client{Timeout: 5 * time.Second}
+				resp, err := client.Do(req)
+				if err != nil {
+					continue
+				}
+				fmt.Printf("Sent request to backend %s, response status: %s\n", url, resp.Status)
+				resp.Body.Close()
 			}
-
 		}
 	}
 }
@@ -176,18 +186,23 @@ func init() {
 // ==== =============== HASHING VNODE & GET NODE ================
 
 func GetNode(key string) []string {
+	// snapshot IP list dưới RLock
 	listVPSMu.RLock()
-	defer listVPSMu.RUnlock()
 	listIPs := make([]string, 0, len(ListVPS))
 	for _, v := range ListVPS {
 		listIPs = append(listIPs, v.IP)
 	}
+	listVPSMu.RUnlock()
+
 	ring := cgvnode.NewHashRing(listIPs, 100)
 	selected := ring.GetNode(key)
+
 	result := make([]string, 0, len(selected))
 	for _, n := range selected {
 		result = append(result, n.Key)
 	}
+
+	// cache hit (nếu có) sẽ add thêm IP backend
 	result = append(result, HasCacheInVPS(key)...)
 
 	return result
@@ -238,6 +253,9 @@ func (s *ComputeServer) startWorker(shardID int, jobChan <-chan *Job) {
 				break DrainLoop
 			}
 		}
+		if len(q) == 0 {
+			continue // IMPORTANT: tránh q[0]/q[len-1] panic
+		}
 
 		curLen := len(q)
 		if !useLIFO && curLen > HighWaterMark {
@@ -273,8 +291,20 @@ func (s *ComputeServer) startWorker(shardID int, jobChan <-chan *Job) {
 			s.send(nextJob, nil, err)
 			continue
 		}
+		select {
+		case JobBackendChan <- &JobToBackend{
+			IPbackend: Node,
+			Req:       nextJob.CT,
+		}:
+		case <-nextJob.Ctx.Done():
+			s.send(nextJob, nil, nextJob.Ctx.Err())
+			continue
+		default:
+			// hàng đợi gửi backend đầy
+			s.send(nextJob, nil, fmt.Errorf("backend dispatch queue overloaded"))
+			continue
+		}
 
-		time.Sleep(2000 * time.Millisecond) // Giả lập delay xử lý
 		NumberRamdom := rand.Intn(100)
 
 		status := "202 Accepted: " + fmt.Sprint(NumberRamdom)

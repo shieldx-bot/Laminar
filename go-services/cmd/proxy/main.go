@@ -166,66 +166,6 @@ func main() {
 		c.JSON(200, gin.H{"message": "pong"})
 	})
 
-	// POST query endpoint
-	router.POST("/TestHTTP3", func(c *gin.Context) {
-		var jsonReq struct {
-			QueryId     string `json:"QueryId"`
-			QuerySQL    string `json:"QuerySQL"`
-			Payload     string `json:"Payload"`
-			Urlcallback string `json:"url_callback"`
-			Action      string `json:"action"`
-		}
-		if err := c.BindJSON(&jsonReq); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		pbReq := &pb.CallBackRequest{
-			QueryId:     jsonReq.QueryId,
-			QuerySQL:    jsonReq.QuerySQL,
-			Payload:     []byte(jsonReq.Payload),
-			Action:      jsonReq.Action,
-			Urlcallback: jsonReq.Urlcallback,
-		}
-
-		key := jsonReq.QuerySQL
-		if key == "" {
-			key = jsonReq.QueryId
-		}
-
-		// NEW: chỉ enqueue, việc nặng nằm trong StartJobToCallBack()
-		respChan := make(chan JobCallBackResult, 1)
-
-		select {
-		case JobCallBackChan <- &JobCallBack{
-			Ctx:      c.Request.Context(),
-			Key:      key,
-			Req:      pbReq,
-			RespChan: respChan,
-		}:
-		case <-time.After(2 * time.Second):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Server busy, try again later"})
-			return
-		}
-
-		select {
-		case result := <-respChan:
-			if result.Err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": result.Err.Error()})
-				return
-			}
-			res := result.Resp
-			c.Header("Cache-Control", "no-store")
-			c.JSON(http.StatusOK, gin.H{
-				"query_id":      jsonReq.QueryId,
-				"received_size": len(jsonReq.Payload),
-				"record_count":  len(res.GetRecords()),
-			})
-		case <-c.Request.Context().Done():
-			c.JSON(http.StatusRequestTimeout, gin.H{"error": c.Request.Context().Err().Error()})
-			return
-		}
-	})
 
 	router.POST("/router-backend", func(c *gin.Context) {
 		var json struct {

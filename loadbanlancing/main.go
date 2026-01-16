@@ -48,6 +48,6 @@ func main() {
 		c.JSON(http.StatusOK, res)
 	})
 
-	fmt.Println("Load Balancer running on :8081")
-	router.Run(":8081")
+	fmt.Println("Load Balancer running on :8089")
+	router.Run(":8089")
 }
