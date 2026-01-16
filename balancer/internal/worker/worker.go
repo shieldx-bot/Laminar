@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
-	"math/rand"
 	"net/http"
 	"runtime"
 	"strings"
@@ -29,12 +28,7 @@ type ListCachesOnServer struct {
 }
 
 var ListVPS = []VPS{
-	{IP: "localhost:8081", caches: []ListCachesOnServer{}},
 	{IP: "localhost:8082", caches: []ListCachesOnServer{}},
-	{IP: "localhost:8083", caches: []ListCachesOnServer{}},
-	{IP: "localhost:8084", caches: []ListCachesOnServer{}},
-	{IP: "localhost:8085", caches: []ListCachesOnServer{}},
-	{IP: "localhost:8086", caches: []ListCachesOnServer{}},
 }
 
 var RamdomVPS bool = true
@@ -305,9 +299,7 @@ func (s *ComputeServer) startWorker(shardID int, jobChan <-chan *Job) {
 			continue
 		}
 
-		NumberRamdom := rand.Intn(100)
-
-		status := "202 Accepted: " + fmt.Sprint(NumberRamdom)
+		status := "202 Accepted"
 
 		req := &pb.ResponseToBalancer{Status: status}
 
