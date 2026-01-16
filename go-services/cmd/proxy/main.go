@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
-	"strconv"
+	"strings"
 	"time"
 
 	"database/sql"
@@ -16,9 +18,13 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq" // Driver postgres
 	"golang.org/x/sync/singleflight"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 var requestCoalescer singleflight.Group
+
+// NEW: để StartJobToCallBack() gọi được ExecuteQuery
+var globalComputeServer *wk.ComputeServer
 
 type server struct {
 	pb.UnimplementedLaminarGatewayServer
@@ -33,24 +39,115 @@ func NewServer(db *sql.DB, cs *wk.ComputeServer) *server {
 		cs: cs,
 	}
 }
+
+// NEW: result để /TestHTTP3 có thể đợi kết quả từ worker
+type JobCallBackResult struct {
+	Resp *pb.CallBackResponse
+	Err  error
+}
+
+type JobCallBack struct {
+	Ctx      context.Context
+	Key      string
+	Req      *pb.CallBackRequest
+	RespChan chan JobCallBackResult // nil nếu fire-and-forget
+}
+
+var JobCallBackChan chan *JobCallBack = make(chan *JobCallBack, 1000)
+
+func StartJobToCallBack() {
+	for job := range JobCallBackChan {
+		if job == nil || job.Req == nil {
+			continue
+		}
+		if globalComputeServer == nil {
+			if job.RespChan != nil {
+				job.RespChan <- JobCallBackResult{Err: fmt.Errorf("compute server not initialized")}
+			}
+			continue
+		}
+
+		key := job.Key
+		if key == "" {
+			key = job.Req.GetQuerySQL()
+			if key == "" {
+				key = job.Req.GetQueryId()
+			}
+		}
+
+		// ==== MOVED FROM /TestHTTP3: singleflight + timeout + ExecuteQuery ====
+		resAny, err, _ := requestCoalescer.Do(key, func() (interface{}, error) {
+			baseCtx := job.Ctx
+			if baseCtx == nil {
+				baseCtx = context.Background()
+			}
+			ctx, cancel := context.WithTimeout(baseCtx, 3*time.Second)
+			defer cancel()
+			return globalComputeServer.ExecuteQuery(ctx, job.Req)
+		})
+
+		var res *pb.CallBackResponse
+		if err == nil && resAny != nil {
+			res = resAny.(*pb.CallBackResponse)
+		}
+
+		// Trả kết quả về handler nếu cần
+		if job.RespChan != nil {
+			job.RespChan <- JobCallBackResult{Resp: res, Err: err}
+		}
+
+		// ==== Giữ lại logic gọi callback client (nếu có url) ====
+		url := job.Req.GetUrlcallback()
+		if strings.TrimSpace(url) == "" {
+			continue
+		}
+		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+			url = "http://" + url
+		}
+		url = strings.TrimRight(url, "/") + "/callback-query-client"
+
+		// Gửi request gốc (như code hiện tại). Nếu bạn muốn gửi cả "res" thì cần proto/endpoint hỗ trợ.
+		body, mErr := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(job.Req)
+		if mErr != nil {
+			continue
+		}
+
+		req, rErr := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if rErr != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, doErr := client.Do(req)
+		if doErr != nil {
+			continue
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		fmt.Printf("Sent request to callback client: %s, response status: %s, body: %s\n", url, resp.Status, strings.TrimSpace(string(b)))
+	}
+}
+
+func init() {
+	go StartJobToCallBack()
+}
+
 func main() {
 	connStr := "host=34.177.108.132 port=5432 user=postgres password=Vananh12345@ dbname=laminar sslmode=disable"
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		panic(err)
 	}
-	// Đừng đóng DB ngay, chỉ đóng khi main exit
 	defer db.Close()
 
-	// Cấu hình Connection Pool (Quan trọng cho High Performance)
-	db.SetMaxOpenConns(200)  // Giới hạn max 1000 kết nối cùng lúc
-	db.SetMaxIdleConns(25)   // Giữ 25 kết nối rảnh để dùng ngay
-	db.SetConnMaxLifetime(0) // 0 = dùng mãi mãi (hoặc set time để refresh)
+	db.SetMaxOpenConns(200)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(0)
 
-	// Ping kiểm tra
 	if err := db.Ping(); err != nil {
 		fmt.Println("DB Fail:", err)
-		// Có thể return hoặc panic tùy chiến lược
 	} else {
 		fmt.Println("Connected to DB successfully")
 	}
@@ -58,39 +155,37 @@ func main() {
 	// 2.5 KHỞI TẠO COMPUTE SERVER (WORKER POOL) MỘT LẦN
 	computeServer := wk.NewComputeServer(db)
 
-	// HTTP proxy/gateway for benchmarking (can be placed behind Nginx HTTP/3)
+	// NEW: gán cho worker dùng
+	globalComputeServer = computeServer
+
 	myServer := NewServer(db, computeServer)
 
 	router := gin.Default()
 
 	router.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"message": "pong",
-		})
+		c.JSON(200, gin.H{"message": "pong"})
 	})
 
-	// Fast endpoint for QUIC multiplexing tests (small response)
-	router.GET("/fast", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store")
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
-
-	// POST query endpoint (good for load tests; avoids any accidental intermediary caching)
+	// POST query endpoint
 	router.POST("/TestHTTP3", func(c *gin.Context) {
 		var jsonReq struct {
-			QueryId  string `json:"QueryId"`
-			QuerySQL string `json:"QuerySQL"`
-			Payload  string `json:"Payload"`
+			QueryId     string `json:"QueryId"`
+			QuerySQL    string `json:"QuerySQL"`
+			Payload     string `json:"Payload"`
+			Urlcallback string `json:"url_callback"`
+			Action      string `json:"action"`
 		}
 		if err := c.BindJSON(&jsonReq); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		pbReq := &pb.TestHTTP3Request{
-			QueryId:  jsonReq.QueryId,
-			QuerySQL: jsonReq.QuerySQL,
-			Payload:  []byte(jsonReq.Payload),
+		pbReq := &pb.CallBackRequest{
+			QueryId:     jsonReq.QueryId,
+			QuerySQL:    jsonReq.QuerySQL,
+			Payload:     []byte(jsonReq.Payload),
+			Action:      jsonReq.Action,
+			Urlcallback: jsonReq.Urlcallback,
 		}
 
 		key := jsonReq.QuerySQL
@@ -98,95 +193,85 @@ func main() {
 			key = jsonReq.QueryId
 		}
 
-		resAny, err, _ := requestCoalescer.Do(key, func() (interface{}, error) {
-			ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
-			defer cancel()
-			return myServer.cs.ExecuteQuery(ctx, pbReq)
-		})
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// NEW: chỉ enqueue, việc nặng nằm trong StartJobToCallBack()
+		respChan := make(chan JobCallBackResult, 1)
+
+		select {
+		case JobCallBackChan <- &JobCallBack{
+			Ctx:      c.Request.Context(),
+			Key:      key,
+			Req:      pbReq,
+			RespChan: respChan,
+		}:
+		case <-time.After(2 * time.Second):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Server busy, try again later"})
 			return
 		}
-		res := resAny.(*pb.TestHTTP3Response)
 
-		c.Header("Cache-Control", "no-store")
-		c.JSON(http.StatusOK, gin.H{
-			"status":        res.Status,
-			"query_id":      jsonReq.QueryId,
-			"received_size": len(jsonReq.Payload),
-			"record_count":  len(res.Records),
-		})
+		select {
+		case result := <-respChan:
+			if result.Err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": result.Err.Error()})
+				return
+			}
+			res := result.Resp
+			c.Header("Cache-Control", "no-store")
+			c.JSON(http.StatusOK, gin.H{
+				"query_id":      jsonReq.QueryId,
+				"received_size": len(jsonReq.Payload),
+				"record_count":  len(res.GetRecords()),
+			})
+		case <-c.Request.Context().Done():
+			c.JSON(http.StatusRequestTimeout, gin.H{"error": c.Request.Context().Err().Error()})
+			return
+		}
 	})
 
-	// GET user endpoint (more REST-like for read-heavy benchmarks)
-	// Example: GET /user/123 or GET /user?id=123
-	router.GET("/user", func(c *gin.Context) {
-		idStr := c.Query("id")
-		if idStr == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing id"})
-			return
+	router.POST("/router-backend", func(c *gin.Context) {
+		var json struct {
+			QueryId     string `json:"query_id"`
+			QuerySQL    string `json:"query_sql"`
+			Payload     string `json:"payload"`
+			Urlcallback string `json:"url_callback"`
+			Action      string `json:"action"`
 		}
-		id, err := strconv.Atoi(idStr)
-		if err != nil || id <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+
+		if err := c.BindJSON(&json); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		pbReq := &pb.TestHTTP3Request{
-			QueryId:  fmt.Sprintf("req_%d", id),
-			QuerySQL: fmt.Sprintf("SELECT id, username, email, password_hash, balance, is_active, created_at, updated_at FROM users WHERE id = %d", id),
-		}
-
-		key := pbReq.QuerySQL
+		key := json.QuerySQL
 		if key == "" {
-			key = pbReq.QueryId
+			key = json.QueryId
 		}
 
-		resAny, err, _ := requestCoalescer.Do(key, func() (interface{}, error) {
-			ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
-			defer cancel()
-			return myServer.cs.ExecuteQuery(ctx, pbReq)
-		})
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		res := resAny.(*pb.TestHTTP3Response)
-
-		c.Header("Cache-Control", "no-store")
-		c.JSON(http.StatusOK, gin.H{
-			"status":        res.Status,
-			"query_id":      pbReq.QueryId,
-			"received_size": 0,
-			"record_count":  len(res.Records),
-		})
-	})
-
-	router.POST("/TestHTTP3_no_backend", func(c *gin.Context) {
-		var jsonReq struct {
-			QueryId  string `json:"query_id"`
-			QuerySQL string `json:"query_sql"`
-			Payload  string `json:"payload"`
-		}
-		if err := c.BindJSON(&jsonReq); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+		select {
+		case JobCallBackChan <- &JobCallBack{
+			Ctx: c.Request.Context(),
+			Key: key,
+			Req: &pb.CallBackRequest{
+				QueryId:     json.QueryId,
+				QuerySQL:    json.QuerySQL,
+				Payload:     []byte(json.Payload),
+				Urlcallback: json.Urlcallback,
+				Action:      json.Action,
+			},
+			RespChan: nil, // fire-and-forget
+		}:
+		case <-time.After(2 * time.Second):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Server busy, try again later"})
 			return
 		}
 
-		pbReq := &pb.TestHTTP3Request{
-			QueryId:  jsonReq.QueryId,
-			QuerySQL: jsonReq.QuerySQL,
-			Payload:  []byte(jsonReq.Payload),
-		}
-
-		// Placeholder: no backend client wired yet; just acknowledge receipt.
-		fmt.Printf("Request Test HTTP3 received (query_id=%s)\n", pbReq.QueryId)
-		c.JSON(200, gin.H{"status": "ok"})
+		c.JSON(http.StatusOK, gin.H{"status": "received"})
 	})
+
 	port := os.Getenv("LAMINAR_PROXY_PORT")
 	if port == "" {
 		port = "8081"
 	}
 	fmt.Printf("Starting server on :%s\n", port)
-	router.Run(":" + port) // listen and serve
+	router.Run(":" + port)
+	_ = myServer // giữ nếu bạn còn dùng nơi khác; nếu không dùng nữa có thể xoá
 }
