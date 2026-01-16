@@ -2,7 +2,7 @@ const { Pool } = require('pg');
 
 const pool = new Pool({
   // Chú ý: Password chứa ký tự đặc biệt @ cần được mã hóa là %40 nếu dùng connection string
-  connectionString: "postgresql://postgres:Vananh12345%40@34.177.91.6:5432/laminar?sslmode=disable",
+  connectionString: "postgresql://postgres:Vananh12345%40@localhost:5432/laminar?sslmode=disable",
 }); 
 
 async function seed() {

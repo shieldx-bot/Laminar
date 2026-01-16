@@ -43,4 +43,5 @@ benchmark/NaiveCheck/node_modules
 report.md
 .gitignore
 REPORT_BENCHMARK.md
- 
+Laminar/gateway/node_modules
+gateway/node_modules/ 
