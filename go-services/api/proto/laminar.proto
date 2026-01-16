@@ -9,7 +9,7 @@ option go_package = "./pb";
 // Service định nghĩa các phương thức giao tiếp chính
 service LaminarGateway {
  
-  rpc TestHTTP3 (TestHTTP3Request) returns (TestHTTP3Response);
+  rpc TestHTTP3 (RequestToBalancer) returns (ResponseToBalancer);
 
   rpc PingPong (PingRequest) returns (PingResponse);
 
@@ -21,15 +21,18 @@ service LaminarGateway {
     // const payload = new Uint8Array(10 * 1024 * 1024); // 10MB
 
 
-message TestHTTP3Request {
+message RequestToBalancer {
    string QueryId = 1;
    string QuerySQL = 3; 
    bytes payload = 2;
    string Urlcallback = 4;
+   string Action  = 5;
 }
-message TestHTTP3Response {
+message ResponseToBalancer {
    string status = 1;
 }
+
+ 
 
 
 message  CallBackRequest { 
@@ -37,6 +40,7 @@ message  CallBackRequest {
    string QuerySQL = 3; 
    bytes payload = 2;
    string Urlcallback = 4;
+   string Action = 5;
 }
 
 message  CallBackResponse { 
@@ -44,6 +48,7 @@ message  CallBackResponse {
     string QuerySQL =3; 
     repeated google.protobuf.Struct records = 4;
     string Urlcallback = 5;
+    string Action = 6;
 }
 
 
