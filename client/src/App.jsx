@@ -6,78 +6,107 @@ import './App.css'
 import { shareDataServer } from './share/share';
 import { callWithHedging } from './load-balancer/gRPC/main';
 
+function percentile(sortedArr, p) {
+  if (!sortedArr.length) return NaN;
+  const idx = (p / 100) * (sortedArr.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sortedArr[lo];
+  const w = idx - lo;
+  return sortedArr[lo] + (sortedArr[hi] - sortedArr[lo]) * w;
+}
+
+function computeTailStats(samples) {
+  const arr = samples.slice().sort((a, b) => a - b);
+  const sum = arr.reduce((a, b) => a + b, 0);
+  return {
+    count: arr.length,
+    avg: arr.length ? sum / arr.length : NaN,
+    p50: percentile(arr, 50),
+    p95: percentile(arr, 95),
+    p99: percentile(arr, 99),
+    max: arr.length ? arr[arr.length - 1] : NaN,
+  };
+}
+
 function App() {
   const [count, setCount] = useState(0)
   const [socket, setSocket] = useState(null);
+
   const resultsRef = useRef([]);
+  const expectedRef = useRef(0);
+  const printedRef = useRef(false);
 
   useEffect(() => {
-
-
-
     const socket = io("http://localhost:3000");
     if (!socket) {
       console.error("Socket connection failed");
       return;
-    } else {
-      console.log("Socket connected");
     }
     setSocket(socket);
 
-
     socket.on("job_done", (msg) => {
-      console.log("Job done message received:", msg);
+      // proto toObject() usually returns camelCase keys:
+      // urlcallback (not Urlcallback)
+      const t0Raw =
+        msg?.Urlcallback ??
+        msg?.urlcallback ??
+        msg?.Data?.Urlcallback ??
+        msg?.Data?.urlcallback;
+
+      const timeStart = parseInt(t0Raw, 10);
       const timeEnd = Date.now();
-      const timeStart = parseInt(msg.Urlcallback);
       const duration = timeEnd - timeStart;
-      console.log("Response time (ms):", duration);
-      if (!isNaN(duration)) {
-        resultsRef.current.push(duration);
+
+      if (!Number.isFinite(duration) || duration < 0) return;
+
+      resultsRef.current.push(duration);
+
+      // Print once when we have enough samples
+      if (!printedRef.current && expectedRef.current > 0 && resultsRef.current.length >= expectedRef.current) {
+        printedRef.current = true;
+        const s = computeTailStats(resultsRef.current);
+        console.log("Tail latency stats (ms):", s);
       }
     });
   }, []);
 
-  const testRequest = () => {
-    for (let i = 0; i < 100; i++) {
+  const testRequest = async () => {
+    const TOTAL = 100; // tăng lên 1000+ nếu muốn P99 ổn định hơn
+    resultsRef.current = [];
+    expectedRef.current = TOTAL;
+    printedRef.current = false;
 
+    for (let i = 0; i < TOTAL; i++) {
       fetchQueyData();
-
     }
-    // After some time, log average response time
+
+    // fallback: nếu chưa đủ sample sau 10s thì vẫn in ra cái đang có
     setTimeout(() => {
-      const arr = resultsRef.current;
-      console.log("Total requests:", arr.length);
-      if (arr.length > 0) {
-        console.log("Average response time:", arr.reduce((a, b) => a + b, 0) / arr.length);
+      if (!printedRef.current) {
+        const s = computeTailStats(resultsRef.current);
+        console.log("Tail latency stats (partial, ms):", s);
       }
-    }, 5000);
-
-
-
-
+    }, 10000);
   }
-
 
   const fetchQueyData = async () => {
     const queryId = "q-" + Math.random().toString(36).slice(2);
-    const querySQL = `SELECT * FROM users limit  1`;
+    const querySQL = `SELECT * FROM users limit 1`;
     const timeStart = Date.now();
+
     const ring = new (await import('./load-balancer/vnode/main')).HashRing(shareDataServer, 20);
     const backends = ring.getNodes(querySQL, 3);
+
     socket.emit('register', { queryId: queryId });
+
     callWithHedging(
       backends,
-      {QueryId: queryId, QuerySQL: querySQL, Urlcallback: timeStart.toString(), Action: "READ"},
+      { QueryId: queryId, QuerySQL: querySQL, Urlcallback: timeStart.toString(), Action: "READ" },
       400
-    ).then(res => {
-      // const response =
-      // console.log("✅ Response from:", res.server);
-      // console.log(res.response);
-    }).catch(err => {
+    ).catch(err => {
       console.error("❌ RPC failed:", err);
     });
-
-
   }
 
   return (
