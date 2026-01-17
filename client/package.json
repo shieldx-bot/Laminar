@@ -10,6 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.0",
+    "google-protobuf": "^4.0.1",
+    "grpc-web": "^2.0.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "socket.io-client": "^4.8.3"
@@ -23,6 +27,8 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "grpc-tools": "^1.13.1",
+    "protoc-gen-grpc-web": "^1.5.0",
     "vite": "npm:rolldown-vite@7.2.5"
   },
   "overrides": {

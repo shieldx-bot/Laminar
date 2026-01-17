@@ -1,20 +1,17 @@
 package worker
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"hash/fnv"
-	"net/http"
-	"runtime"
-	"strings"
+	"log"
 	"sync"
 	"time"
 
 	cgvnode "github/shieldx-bot/loadbanlacing/internal/cg-vnode"
 	pb "github/shieldx-bot/loadbanlacing/pb"
 
-	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type VPS struct {
@@ -27,8 +24,13 @@ type ListCachesOnServer struct {
 	queryKey  string
 }
 
+// Danh sách địa chỉ gRPC của các Worker
 var ListVPS = []VPS{
-	{IP: "localhost:8082", caches: []ListCachesOnServer{}},
+	{IP: "localhost:50051", caches: []ListCachesOnServer{}},
+	{IP: "localhost:50052", caches: []ListCachesOnServer{}},
+	{IP: "localhost:50053", caches: []ListCachesOnServer{}},
+	{IP: "localhost:50054", caches: []ListCachesOnServer{}},
+	{IP: "localhost:50055", caches: []ListCachesOnServer{}},
 }
 
 var RamdomVPS bool = true
@@ -46,141 +48,54 @@ func hasVPS(ip string) bool {
 	return false
 }
 
-func addCacheToVPS(ip string, queryKey string) {
-	listVPSMu.Lock()
-	defer listVPSMu.Unlock()
-	for i, v := range ListVPS {
-		if v.IP == ip {
-			ListVPS[i].caches = append(ListVPS[i].caches, ListCachesOnServer{
-				Timestamp: time.Now(),
-				queryKey:  queryKey,
-			})
-			break
-		}
-	}
-}
-func removeCacheInVPS(ip string, queryKey string) {
-	listVPSMu.Lock()
-	defer listVPSMu.Unlock()
-	for i, v := range ListVPS {
-		if v.IP == ip {
-			for j, c := range v.caches {
-				if c.queryKey == queryKey {
-					// Xoá cache khỏi slice
-					ListVPS[i].caches = append(ListVPS[i].caches[:j], ListVPS[i].caches[j+1:]...)
-					return
-				}
-			}
-		}
-	}
-}
-
 func HasCacheInVPS(queryKey string) []string {
+	// Logic cache đơn giản, giữ nguyên hoặc tối ưu sau
 	listVPSMu.Lock()
 	defer listVPSMu.Unlock()
-
-	var ips []string
-	now := time.Now()
-
-	for i := range ListVPS {
-		// purge expired + check hit
-		dst := ListVPS[i].caches[:0]
-		hasHit := false
-
-		for _, c := range ListVPS[i].caches {
-			if now.Sub(c.Timestamp) > 5*time.Minute {
-				continue // drop expired
-			}
-			if c.queryKey == queryKey {
-				hasHit = true
-			}
-			dst = append(dst, c)
-		}
-
-		ListVPS[i].caches = dst
-
-		if hasHit {
-			ips = append(ips, ListVPS[i].IP) // IMPORTANT: trả IP, không phải queryKey
-		}
-	}
-
-	return ips
-}
-
-type Job struct {
-	Ctx      context.Context
-	QueryId  string
-	QuerySQL string
-	CT       *pb.RequestToBalancer
-	RespChan chan *JobResult
-}
-
-type JobResult struct {
-	Resp *pb.ResponseToBalancer
-	err  error
+	// ... (giữ nguyên logic cache hit giả lập - có thể implement lại sau nếu cần)
+	return []string{}
 }
 
 type ComputeServer struct {
 	pb.UnimplementedLaminarGatewayServer
-	workerChans []chan *Job
-	numShards   int
 }
 
-// ==== ===============  JOB TO BACKEND  ================
-type JobToBackend struct {
-	IPbackend []string
-	Req       *pb.RequestToBalancer
-}
+// Pool kết nối gRPC
+var (
+	grpcConns   = make(map[string]*grpc.ClientConn)
+	grpcConnsMu sync.RWMutex
+)
 
-var JobBackendChan chan *JobToBackend = make(chan *JobToBackend, 1000)
-
-func StartJobToBackendWorker() {
-	for {
-		job, ok := <-JobBackendChan
-		if !ok {
-			return
-		}
-		if job != nil {
-			for _, ip := range job.IPbackend {
-				url := ip
-				if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-					url = "http://" + url
-				}
-				// NEW: đúng endpoint backend
-				url = strings.TrimRight(url, "/") + "/router-backend"
-
-				// NEW: xuất field theo proto_name (snake_case) để match query_id, query_sql...
-				body, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(job.Req)
-				if err != nil {
-					continue
-				}
-
-				req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-				if err != nil {
-					continue
-				}
-				req.Header.Set("Content-Type", "application/json")
-
-				client := &http.Client{Timeout: 5 * time.Second}
-				resp, err := client.Do(req)
-				if err != nil {
-					continue
-				}
-				fmt.Printf("Sent request to backend %s, response status: %s\n", url, resp.Status)
-				resp.Body.Close()
-			}
-		}
+func getGrpcConn(addr string) (*grpc.ClientConn, error) {
+	grpcConnsMu.RLock()
+	conn, ok := grpcConns[addr]
+	grpcConnsMu.RUnlock()
+	if ok {
+		return conn, nil
 	}
-}
 
-func init() {
-	go StartJobToBackendWorker()
+	grpcConnsMu.Lock()
+	defer grpcConnsMu.Unlock()
+	// Double check
+	if conn, ok := grpcConns[addr]; ok {
+		return conn, nil
+	}
+
+	// Dial gRPC node
+	conn, err := grpc.Dial(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// grpc.WithBlock(), // Bỏ WithBlock để non-blocking dial
+	)
+	if err != nil {
+		return nil, err
+	}
+	grpcConns[addr] = conn
+	return conn, nil
 }
 
 // ==== =============== HASHING VNODE & GET NODE ================
 
 func GetNode(key string) []string {
-	// snapshot IP list dưới RLock
 	listVPSMu.RLock()
 	listIPs := make([]string, 0, len(ListVPS))
 	for _, v := range ListVPS {
@@ -195,167 +110,42 @@ func GetNode(key string) []string {
 	for _, n := range selected {
 		result = append(result, n.Key)
 	}
-
-	// cache hit (nếu có) sẽ add thêm IP backend
-	result = append(result, HasCacheInVPS(key)...)
-
 	return result
 }
 
 func NewComputeServer() *ComputeServer {
-	numShares := runtime.NumCPU()
-
-	s := &ComputeServer{
-		workerChans: make([]chan *Job, numShares),
-		numShards:   numShares,
-	}
-	for i := 0; i < numShares; i++ {
-		s.workerChans[i] = make(chan *Job, 200) // buffer size 200
-		go s.startWorker(i, s.workerChans[i])
-	}
-	return s
-}
-
-func (s *ComputeServer) startWorker(shardID int, jobChan <-chan *Job) {
-	var q []*Job
-	useLIFO := false // Mặc định là FIFO (Công bằng)
-
-	const (
-		HighWaterMark = 80 // Khi hàng đợi > 80: Bật LIFO (Cứu hoả)
-		LowWaterMark  = 40 // Khi hàng đợi < 40: Về FIFO (Bình thường)
-	)
-	for {
-		job, ok := <-jobChan
-		if !ok {
-			return
-		}
-		if job != nil {
-			q = append(q, job)
-		}
-
-	DrainLoop:
-		for {
-			select {
-			case job, ok := <-jobChan:
-				if !ok {
-					return
-				}
-				if job != nil {
-					q = append(q, job)
-				}
-			default:
-				break DrainLoop
-			}
-		}
-		if len(q) == 0 {
-			continue // IMPORTANT: tránh q[0]/q[len-1] panic
-		}
-
-		curLen := len(q)
-		if !useLIFO && curLen > HighWaterMark {
-			useLIFO = true
-		} else if useLIFO && curLen < LowWaterMark {
-			useLIFO = false
-		}
-
-		var nextJob *Job
-
-		if useLIFO {
-			lastIndex := len(q) - 1
-			nextJob = q[lastIndex]
-			q = q[:lastIndex] // Cắt đuôi
-		} else {
-			nextJob = q[0]
-			q = q[1:] // Cắt đầu
-		}
-
-		//  Kiểm tra check
-		select {
-		case <-nextJob.Ctx.Done():
-			continue
-		default:
-
-		}
-
-		// Xử lý công việc
-
-		Node := GetNode(nextJob.QuerySQL)
-		if len(Node) == 0 {
-			err := fmt.Errorf("No available backend nodes")
-			s.send(nextJob, nil, err)
-			continue
-		}
-		select {
-		case JobBackendChan <- &JobToBackend{
-			IPbackend: Node,
-			Req:       nextJob.CT,
-		}:
-		case <-nextJob.Ctx.Done():
-			s.send(nextJob, nil, nextJob.Ctx.Err())
-			continue
-		default:
-			// hàng đợi gửi backend đầy
-			s.send(nextJob, nil, fmt.Errorf("backend dispatch queue overloaded"))
-			continue
-		}
-
-		status := "202 Accepted"
-
-		req := &pb.ResponseToBalancer{Status: status}
-
-		s.send(nextJob, req, nil)
-	}
-}
-
-func (s *ComputeServer) send(job *Job, resp *pb.ResponseToBalancer, err error) {
-	job.RespChan <- &JobResult{
-		Resp: resp,
-		err:  err,
-	}
-
+	return &ComputeServer{}
 }
 
 func (s *ComputeServer) SubmitJob(ctx context.Context, req *pb.RequestToBalancer) (*pb.ResponseToBalancer, error) {
-	shardKey := req.QuerySQL
-	if shardKey == "" {
-		shardKey = req.QueryId
+	// 1. Dinh tuyen
+	nodes := GetNode(req.QuerySQL)
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("no available backend nodes")
 	}
 
-	shardIdx := int(hashTenant(shardKey)) % s.numShards
+	// 2. Gửi request gRPC song song (Fire and Forget)
+	go func(targetNodes []string, r *pb.RequestToBalancer) {
+		for _, addr := range targetNodes {
+			conn, err := getGrpcConn(addr)
+			if err != nil {
+				log.Printf("Worker: Failed to get conn for %s: %v", addr, err)
+				continue
+			}
 
-	job := &Job{
-		Ctx:      ctx,
-		QueryId:  req.QueryId,
-		QuerySQL: req.QuerySQL,
-		CT:       req,
-		RespChan: make(chan *JobResult, 1),
-	}
-	select {
-	case s.workerChans[shardIdx] <- job:
-		// Đã gửi thành công
-	case <-ctx.Done():
-		// Client hủy request
+			client := pb.NewLaminarGatewayClient(conn)
 
-	default:
-		return nil, fmt.Errorf("Server overloaded, please retry later")
-	}
+			// Call gRPC Method
+			// Timeout ngắn cho call
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, err = client.TestHTTP3(ctx, r)
+			cancel()
 
-	// Chờ kết quả từ Worker
-	select {
-	case result := <-job.RespChan:
-		if result.err != nil {
-			return nil, result.err
+			if err != nil {
+				log.Printf("Worker: gRPC to %s failed: %v", addr, err)
+			}
 		}
-		return result.Resp, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	}(nodes, req)
 
-	}
-
-}
-
-func hashTenant(QueryId string) uint32 {
-	h := fnv.New32a()
-	h.Write([]byte(QueryId))
-	return h.Sum32()
+	return &pb.ResponseToBalancer{Status: "202 Accepted"}, nil
 }

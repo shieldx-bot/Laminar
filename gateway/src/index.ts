@@ -12,13 +12,11 @@ const QUERY_KEY_PREFIX = 'query:socket:'; // query:<queryId> -> socketId
 const PENDING_LIST_PREFIX = 'pending:query:'; // pending:query:<queryId> -> list
 
 io.on('connection', (socket) => {
-  console.log('socket connected', socket.id);
-
+ 
   socket.on('register', async ({ queryId, token }) => {
     // validate token if needed...
     if (!queryId) return;
-    console.log("Registering queryId:", queryId, "with socketId:", socket.id);
-    await redis.set(`${QUERY_KEY_PREFIX}${queryId}`, socket.id, 'EX', 60 * 60); // TTL 1h
+     await redis.set(`${QUERY_KEY_PREFIX}${queryId}`, socket.id, 'EX', 60 * 60); // TTL 1h
     // if there were pending messages, deliver them:
     const pendingKey = `${PENDING_LIST_PREFIX}${queryId}`;
     let msg;
@@ -45,8 +43,7 @@ redisSub.on('message', async (channel, message) => {
   const payload = JSON.parse(message); // { QueryId, Records, ... }
   // Fix: Lấy trực tiếp QueryId từ payload (do backend gửi về là PascalCase)
   const queryId = payload.QueryId;
-  console.log("Received query_done for payload:", payload);
-  const socketId = await redis.get(`${QUERY_KEY_PREFIX}${queryId}`);
+   const socketId = await redis.get(`${QUERY_KEY_PREFIX}${queryId}`);
 
   if (socketId) {
     io.to(socketId).emit('job_done', payload);

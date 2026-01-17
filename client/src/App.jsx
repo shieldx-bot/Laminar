@@ -1,13 +1,16 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import reactLogo from './assets/react.svg'
 import viteLogo from '/vite.svg'
 import { io } from "socket.io-client";
-import { useEffect } from 'react'
 import './App.css'
+import { shareDataServer } from './share/share';
+import { callWithHedging } from './load-balancer/gRPC/main';
 
 function App() {
   const [count, setCount] = useState(0)
   const [socket, setSocket] = useState(null);
+  const resultsRef = useRef([]);
+
   useEffect(() => {
 
 
@@ -21,41 +24,58 @@ function App() {
     }
     setSocket(socket);
 
-  
+
 
     socket.on("job_done", (msg) => {
-      console.log("JOB DONE:", msg);
       const timeEnd = Date.now();
       const timeStart = parseInt(msg.Urlcallback);
-      console.log("Time taken (ms):",timeStart);
+      const duration = timeEnd - timeStart;
+      console.log("Response time (ms):", duration);
+      if (!isNaN(duration)) {
+        resultsRef.current.push(duration);
+      }
     });
   }, []);
-  const fetQueryData = async () => {
+
+  const testRequest = () => {
+    for (let i = 0; i < 100; i++) {
+
+      fetchQueyData();
+
+    }
+    // After some time, log average response time
+    setTimeout(() => {
+      const arr = resultsRef.current;
+      console.log("Total requests:", arr.length);
+      if (arr.length > 0) {
+        console.log("Average response time:", arr.reduce((a, b) => a + b, 0) / arr.length);
+      }
+    }, 5000);
+
+
+
+
+  }
+
+
+  const fetchQueyData = async () => {
     const queryId = "q-" + Math.random().toString(36).slice(2);
-    console.log("QueryId:", queryId);
-     socket.emit("register", { queryId });
-     const timeStart = Date.now();
-    try {
-      const response = await fetch('http://localhost:8083/balance', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          QuerySQL: 'SELECT * FROM users limit 1;',
-          QueryId: queryId,
-          Action: "read",
-          Urlcallback: timeStart.toString(),
-        }),
-      });
-      const data = await response.json();
-      console.log("Query Response from loadbalancer:", data);
- 
-      
-    }
-    catch (error) {
-      console.error("Error fetching query data:", error);
-    }
+    const querySQL = `SELECT * FROM users limit ${Math.floor(Math.random() * 100)};`;
+    const timeStart = Date.now();
+    const ring = new (await import('./load-balancer/vnode/main')).HashRing(shareDataServer, 20);
+    const backends = ring.getNodes(querySQL, 3);
+    callWithHedging(
+      backends,
+      { sql: "SELECT * FROM users LIMIT 1" },
+      400
+    ).then(res => {
+      console.log("✅ Response from:", res.server);
+      console.log(res.response);
+    }).catch(err => {
+      console.error("❌ RPC failed:", err);
+    });
+
+
   }
 
   return (
@@ -80,7 +100,7 @@ function App() {
       <p className="read-the-docs">
         Click on the Vite and React logos to learn more
       </p>
-      <button onClick={fetQueryData}>Fetch Query Data</button>
+      <button onClick={testRequest}>Test Requests</button>
     </>
   )
 }

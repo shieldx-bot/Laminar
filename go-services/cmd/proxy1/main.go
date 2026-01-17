@@ -205,7 +205,7 @@ func main() {
 		// For now, let's assume we use port 9081 if simple
 		// Or better, let the user config it.
 		// If not set, maybe default to 50051?
-		grpcPort = "50051"
+		grpcPort = "50052"
 	}
 
 	go func() {
