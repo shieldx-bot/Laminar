@@ -11,9 +11,9 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import * as jspb from 'google-protobuf';
-import * as google_protobuf_struct_pb from 'google-protobuf/google/protobuf/struct_pb';
+import * as jspbModule from 'google-protobuf';
 
+const jspb = jspbModule.default ?? jspbModule;
 const goog = jspb;
 const global = (function() {
   if (this) { return this; }
@@ -24,8 +24,10 @@ const global = (function() {
 }.call(null));
 
 const COMPILED = false;
-const proto = { laminar: {} };
-goog.object.extend(proto, google_protobuf_struct_pb);
+const proto = globalThis.proto || (globalThis.proto = {});
+proto.laminar = proto.laminar || {};
+proto.google = proto.google || {};
+proto.google.protobuf = proto.google.protobuf || {};
 
 goog.exportSymbol('proto.laminar.CallBackRequest', null, global);
 goog.exportSymbol('proto.laminar.CallBackResponse', null, global);
