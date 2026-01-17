@@ -3,7 +3,8 @@ import * as laminarPb from "../../generated/laminar_pb.js";
 
  
 function createClient(IP) {
-  return new LaminarGatewayClient(IP, null, null);
+  const hostname = /^https?:\/\//i.test(IP) ? IP : `http://${IP}`;
+  return new LaminarGatewayClient(hostname, null, null);
 }
 
 export function callWithHedging(backends, requestData, timeoutMs = 500) {
@@ -18,9 +19,29 @@ export function callWithHedging(backends, requestData, timeoutMs = 500) {
 
     // Convert plain object to Proto Message
     const request = new laminarPb.CallBackRequest();
-    if (requestData.QuerySQL) request.setQuerysql(requestData.QuerySQL);
-    if (requestData.QueryId) request.setQueryid(requestData.QueryId);
-    // Add other fields as needed
+
+    const querySQL =
+      requestData?.QuerySQL ?? requestData?.sql ?? requestData?.querySQL;
+    const queryId =
+      requestData?.QueryId ?? requestData?.queryId;
+
+    const urlcallback =
+      requestData?.Urlcallback ??
+      requestData?.urlcallback ??
+      requestData?.callbackUrl ??
+      requestData?.callbackURL;
+
+    const action =
+      requestData?.Action ?? requestData?.action;
+
+    const payload =
+      requestData?.payload; // should be Uint8Array for bytes
+
+    if (querySQL) request.setQuerysql(querySQL);
+    if (queryId) request.setQueryid(queryId);
+    if (urlcallback) request.setUrlcallback(urlcallback);
+    if (action) request.setAction(action);
+    if (payload instanceof Uint8Array) request.setPayload(payload);
 
     backends.forEach((server) => {
       const client = createClient(server.IP);
@@ -69,4 +90,3 @@ export function callWithHedging(backends, requestData, timeoutMs = 500) {
     });
 } );
 }
- 
