@@ -13,7 +13,8 @@ const PENDING_LIST_PREFIX = 'pending:query:'; // pending:query:<queryId> -> list
 
 io.on('connection', (socket) => {
  
-  socket.on('register', async ({ queryId, token }) => {
+  socket.on('register', async ({ queryId }) => {
+    console.log('socket registered', socket.id, queryId);
     // validate token if needed...
     if (!queryId) return;
      await redis.set(`${QUERY_KEY_PREFIX}${queryId}`, socket.id, 'EX', 60 * 60); // TTL 1h
@@ -39,13 +40,20 @@ redisSub.subscribe('query_done', (err, count) => {
 });
 
 redisSub.on('message', async (channel, message) => {
+  console.log('Received message:', channel, message);
   if (channel !== 'query_done') return;
   const payload = JSON.parse(message); // { QueryId, Records, ... }
   // Fix: Lấy trực tiếp QueryId từ payload (do backend gửi về là PascalCase)
-  const queryId = payload.QueryId;
-   const socketId = await redis.get(`${QUERY_KEY_PREFIX}${queryId}`);
-
+   const queryId =
+    payload?.QueryId ??
+    payload?.queryId ??
+    payload?.query_id;
+ 
+  if (!queryId) return;
+  const socketId = await redis.get(`${QUERY_KEY_PREFIX}${queryId}`);
+   
   if (socketId) {
+    console.log('Client online, delivering message to socketId:', socketId);
     io.to(socketId).emit('job_done', payload);
   } else {
     // client offline: push to pending list to deliver later
