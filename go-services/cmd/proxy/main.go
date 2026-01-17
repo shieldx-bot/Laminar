@@ -16,9 +16,11 @@ import (
 	wk "github/shieldx-bot/laminar/internal/worker"
 
 	"github.com/gin-gonic/gin"
+	"github.com/improbable-eng/grpc-web/go/grpcweb"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq" // Driver postgres
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/cors"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 )
@@ -78,8 +80,42 @@ func (s *server) PingPong(ctx context.Context, req *pb.PingRequest) (*pb.PingRes
 }
 
 func (s *server) CallBack(ctx context.Context, req *pb.CallBackRequest) (*pb.CallBackResponse, error) {
-	// Implement if needed, currently seemingly unused via gRPC entry
-	return nil, nil
+	if req == nil {
+		return nil, fmt.Errorf("nil request")
+	}
+	if globalComputeServer == nil {
+		return nil, fmt.Errorf("compute server not initialized")
+	}
+
+	key := req.GetQuerySQL()
+	if key == "" {
+		key = req.GetQueryId()
+	}
+
+	select {
+	case JobCallBackChan <- &JobCallBack{
+		// Fix: Dùng context.Background() thay vì c.Request.Context()
+		// Vì request kết thúc ngay (fire-and-forget) nên Context của nó sẽ bị Cancel -> Worker bị lỗi context canceled
+		Ctx: context.Background(),
+		Key: key,
+		Req: &pb.CallBackRequest{
+			QueryId:     req.QueryId,
+			QuerySQL:    req.QuerySQL,
+			Payload:     req.Payload,
+			Urlcallback: req.Urlcallback,
+			Action:      req.Action,
+		},
+		RespChan: nil, // fire-and-forget
+	}:
+	case <-time.After(2 * time.Second):
+		return nil, fmt.Errorf("Server busy, try again later")
+	}
+	res := &pb.CallBackResponse{
+		QueryId:  req.QueryId,
+		QuerySQL: req.QuerySQL,
+	}
+
+	return res, nil
 }
 
 // NEW: result để /TestHTTP3 có thể đợi kết quả từ worker
@@ -208,15 +244,16 @@ func main() {
 		grpcPort = "50051"
 	}
 
+	grpcServer := grpc.NewServer()
+	pb.RegisterLaminarGatewayServer(grpcServer, myServer)
+
 	go func() {
 		lis, err := net.Listen("tcp", ":"+grpcPort)
 		if err != nil {
 			log.Fatalf("failed to listen grpc: %v", err)
 		}
-		s := grpc.NewServer()
-		pb.RegisterLaminarGatewayServer(s, myServer)
 		fmt.Printf("gRPC server listening at %v\n", lis.Addr())
-		if err := s.Serve(lis); err != nil {
+		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("failed to serve: %v", err)
 		}
 	}()
@@ -272,10 +309,37 @@ func main() {
 	})
 
 	port := os.Getenv("LAMINAR_PROXY_PORT")
-	// if port == "" {
-	// 	port = "8081"
-	// }
-	fmt.Printf("Starting server on :%s\n", port)
-	router.Run(":" + port)
+	if port == "" {
+		port = "8081"
+	}
+
+	wrappedGrpc := grpcweb.WrapServer(
+		grpcServer,
+		grpcweb.WithOriginFunc(func(origin string) bool { return true }),
+	)
+
+	// Serve both HTTP (gin) and gRPC-Web on the same port.
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if wrappedGrpc.IsAcceptableGrpcCorsRequest(r) ||
+			wrappedGrpc.IsGrpcWebRequest(r) ||
+			wrappedGrpc.IsGrpcWebSocketRequest(r) {
+			wrappedGrpc.ServeHTTP(w, r)
+			return
+		}
+		router.ServeHTTP(w, r)
+	})
+
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173"},
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders:   []string{"*"},
+		ExposedHeaders:   []string{"grpc-status", "grpc-message", "grpc-status-details-bin"},
+		AllowCredentials: true,
+	})
+
+	fmt.Printf("HTTP+gRPC-Web server listening on :%s\n", port)
+	if err := http.ListenAndServe(":"+port, c.Handler(h)); err != nil {
+		log.Fatal(err)
+	}
 	_ = myServer // giữ nếu bạn còn dùng nơi khác; nếu không dùng nữa có thể xoá
 }
