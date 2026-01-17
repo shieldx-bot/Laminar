@@ -1,0 +1,64 @@
+{
+  "hash": "d366b98c",
+  "configHash": "da305933",
+  "lockfileHash": "1d84fb51",
+  "browserHash": "8f8dc194",
+  "optimized": {
+    "google-protobuf": {
+      "src": "../../node_modules/google-protobuf/google-protobuf.js",
+      "file": "google-protobuf.js",
+      "fileHash": "e75d8dc2",
+      "needsInterop": true
+    },
+    "google-protobuf/google/protobuf/struct_pb": {
+      "src": "../../node_modules/google-protobuf/google/protobuf/struct_pb.js",
+      "file": "google-protobuf_google_protobuf_struct_pb.js",
+      "fileHash": "abd1b2b9",
+      "needsInterop": true
+    },
+    "grpc-web": {
+      "src": "../../node_modules/grpc-web/index.js",
+      "file": "grpc-web.js",
+      "fileHash": "c8310414",
+      "needsInterop": true
+    },
+    "react-dom/client": {
+      "src": "../../node_modules/react-dom/client.js",
+      "file": "react-dom_client.js",
+      "fileHash": "24e01487",
+      "needsInterop": true
+    },
+    "react": {
+      "src": "../../node_modules/react/index.js",
+      "file": "react.js",
+      "fileHash": "49c59d16",
+      "needsInterop": true
+    },
+    "react/jsx-dev-runtime": {
+      "src": "../../node_modules/react/jsx-dev-runtime.js",
+      "file": "react_jsx-dev-runtime.js",
+      "fileHash": "9db3f121",
+      "needsInterop": true
+    },
+    "socket.io-client": {
+      "src": "../../node_modules/socket.io-client/build/esm/index.js",
+      "file": "socket__io-client.js",
+      "fileHash": "ec04517d",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-DUEDWNxO": {
+      "file": "chunk-DUEDWNxO.js",
+      "isDynamicEntry": false
+    },
+    "google-protobuf-DshEgFcz": {
+      "file": "google-protobuf-DshEgFcz.js",
+      "isDynamicEntry": false
+    },
+    "react-DYoDbkyB": {
+      "file": "react-DYoDbkyB.js",
+      "isDynamicEntry": false
+    }
+  }
+}

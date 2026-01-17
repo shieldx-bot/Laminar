@@ -9,4 +9,4 @@ globalThis.proto.google.protobuf = globalThis.proto.google.protobuf || {};
 globalThis.COMPILED = globalThis.COMPILED ?? false;
 
 // Load Struct (and friends) which register into global `proto`.
-await import('google-protobuf/google/protobuf/struct_pb.js');
+await import('google-protobuf/google/protobuf/struct_pb');
