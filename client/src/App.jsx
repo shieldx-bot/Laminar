@@ -25,8 +25,8 @@ function App() {
     setSocket(socket);
 
 
-
     socket.on("job_done", (msg) => {
+      console.log("Job done message received:", msg);
       const timeEnd = Date.now();
       const timeStart = parseInt(msg.Urlcallback);
       const duration = timeEnd - timeStart;
@@ -60,17 +60,19 @@ function App() {
 
   const fetchQueyData = async () => {
     const queryId = "q-" + Math.random().toString(36).slice(2);
-    const querySQL = `SELECT * FROM users limit ${Math.floor(Math.random() * 100)};`;
+    const querySQL = `SELECT * FROM users limit  1`;
     const timeStart = Date.now();
     const ring = new (await import('./load-balancer/vnode/main')).HashRing(shareDataServer, 20);
     const backends = ring.getNodes(querySQL, 3);
+    socket.emit('register', { queryId: queryId });
     callWithHedging(
       backends,
-      { sql: "SELECT * FROM users LIMIT 1" },
+      {QueryId: queryId, QuerySQL: querySQL, Urlcallback: timeStart.toString(), Action: "READ"},
       400
     ).then(res => {
-      console.log("✅ Response from:", res.server);
-      console.log(res.response);
+      // const response =
+      // console.log("✅ Response from:", res.server);
+      // console.log(res.response);
     }).catch(err => {
       console.error("❌ RPC failed:", err);
     });
