@@ -5,6 +5,7 @@ import { io } from "socket.io-client";
 import './App.css'
 import { shareDataServer } from './share/share';
 import { callWithHedging } from './load-balancer/gRPC/main';
+import { HashRing } from './load-balancer/vnode/main';
 
 
 
@@ -38,6 +39,26 @@ function computeTailStats(samples) {
     p99: percentile(arr, 99),
     max: arr.length ? arr[arr.length - 1] : NaN,
   };
+}
+
+function bumpCount(map, key, inc = 1) {
+  map.set(key, (map.get(key) || 0) + inc);
+}
+
+function distributionSnapshot(map) {
+  const entries = Array.from(map.entries());
+  entries.sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((acc, [, v]) => acc + v, 0);
+
+  const byBackend = {};
+  const ratio = {};
+
+  for (const [k, v] of entries) {
+    byBackend[k] = v;
+    ratio[k] = total > 0 ? v / total : 0;
+  }
+
+  return { total, byBackend, ratio };
 }
 
 function SendTelegramMessage(message) {
@@ -78,6 +99,10 @@ function App() {
   const printedRef = useRef(false);
   const [countRequests, setCountRequests] = useState(0);
 
+  // Distribution counters (do NOT affect latency samples)
+  const attemptsByBackendRef = useRef(new Map()); // how many RPC attempts were sent to each backend
+  const winsByBackendRef = useRef(new Map()); // which backend won (first success) per query
+
   useEffect(() => {
 
     const socket = io(import.meta.env.VITE_SOCKET_URL);
@@ -115,6 +140,9 @@ function App() {
         console.log("Tail latency stats (ms):", s);
         SendTelegramMessage(`Tail latency stats (ms): ${JSON.stringify(s)}`);
 
+        console.log("Backend distribution (attempts):", distributionSnapshot(attemptsByBackendRef.current));
+        console.log("Backend distribution (wins):", distributionSnapshot(winsByBackendRef.current));
+
       }
     });
   }, []);
@@ -130,6 +158,9 @@ function App() {
     expectedRef.current = totalToSend;
     printedRef.current = false;
 
+    attemptsByBackendRef.current = new Map();
+    winsByBackendRef.current = new Map();
+
     for (let i = 0; i < totalToSend; i++) {
       fetchQueyData();
     }
@@ -144,6 +175,9 @@ function App() {
         s.lost = Math.max(0, expectedRef.current - resultsRef.current.length);
         console.log("Tail latency stats (partial, ms):", s);
         SendTelegramMessage(`Tail latency stats (partial, ms): ${JSON.stringify(s)}`);
+
+        console.log("Backend distribution (attempts):", distributionSnapshot(attemptsByBackendRef.current));
+        console.log("Backend distribution (wins):", distributionSnapshot(winsByBackendRef.current));
       }
     }, 10000);
   }
@@ -152,10 +186,17 @@ function App() {
 
     const queryId = "q-" + Math.random().toString(36).slice(2);
     const querySQL = `SELECT * FROM users WHERE id = ${Math.floor(Math.random() * 5) + 1};`;
-    const timeStart = Date.now();
 
-    const ring = new (await import('./load-balancer/vnode/main')).HashRing(shareDataServer, 20);
+    const ring = new HashRing(shareDataServer, 20);
     const backends = ring.getNodes(querySQL, 3);
+
+    // Count distribution of outgoing hedged attempts
+    for (const b of backends) {
+      if (b?.IP) bumpCount(attemptsByBackendRef.current, b.IP, 1);
+    }
+
+    // Start timing as close to the actual send as possible (avoid client-side noise)
+    const timeStart = Date.now();
 
     socket.emit('register', { queryId: queryId });
 
@@ -163,7 +204,9 @@ function App() {
       backends,
       { QueryId: queryId, QuerySQL: querySQL, Urlcallback: timeStart.toString(), Action: "READ" },
       20000
-    ).catch(err => {
+    ).then(({ server }) => {
+      if (server) bumpCount(winsByBackendRef.current, server, 1);
+    }).catch(err => {
       console.error("❌ RPC failed:", err);
     });
   }
