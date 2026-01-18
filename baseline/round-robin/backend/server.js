@@ -2,6 +2,10 @@ const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
 function startCpuP95Logger(label) {
   const sampleEveryMs = parseInt(process.env.CPU_SAMPLE_MS || '200', 10);
   const windowMs = parseInt(process.env.CPU_WINDOW_MS || '5000', 10);
@@ -47,8 +51,10 @@ function startCpuP95Logger(label) {
   }, sampleEveryMs).unref();
 
   setInterval(() => {
+    const ts = nowIso();
     if (samples === 0) {
-      console.log(`[cpu_p95] label=${label} window=${windowMs}ms samples=0`);
+      console.log(`[cpu] ts=${ts} label=${label} window=${windowMs}ms samples=0`);
+      console.log(`[ram] ts=${ts} label=${label} window=${windowMs}ms samples=0`);
       return;
     }
     const target = Math.max(1, Math.floor(samples * 0.95));
@@ -62,11 +68,11 @@ function startCpuP95Logger(label) {
       }
     }
     const avgCpu = sumCpu / samples;
-    console.log(`[cpu] label=${label} window=${windowMs}ms samples=${samples} avg=${avgCpu.toFixed(1)} p95<=${Math.round(p95Upper)} max=${max.toFixed(1)}`);
+    console.log(`[cpu] ts=${ts} label=${label} window=${windowMs}ms samples=${samples} avg=${avgCpu.toFixed(1)} p95<=${Math.round(p95Upper)} max=${max.toFixed(1)}`);
 
     const avgRssMb = (sumRss / samples) / 1024 / 1024;
     const maxRssMb = maxRss / 1024 / 1024;
-    console.log(`[ram] label=${label} window=${windowMs}ms samples=${samples} avg_mb=${avgRssMb.toFixed(1)} max_mb=${maxRssMb.toFixed(1)}`);
+    console.log(`[ram] ts=${ts} label=${label} window=${windowMs}ms samples=${samples} avg_mb=${avgRssMb.toFixed(1)} max_mb=${maxRssMb.toFixed(1)}`);
 
     buckets.fill(0);
     max = 0;
@@ -181,5 +187,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`[baseline-backend] listening on http://localhost:${PORT} (instanceId=${INSTANCE_ID})`);
+  console.log(`[baseline-backend] ts=${nowIso()} listening on http://localhost:${PORT} (instanceId=${INSTANCE_ID})`);
 });
