@@ -41,7 +41,7 @@ export class HashRing {
         // 3️⃣ Ghép kết quả
         return [
             primary,
-            ...others.slice(0, replicas - 1),
+            ...others.slice(0, replicas - 2),
         ];
     }
 
