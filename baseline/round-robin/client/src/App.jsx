@@ -88,7 +88,7 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [lbHealth, setLbHealth] = useState(null);
 
-  const lbUrl = (import.meta.env.VITE_LB_URL || 'http://localhost:8090').replace(/\/$/, '');
+  const lbUrl = (import.meta.env.VITE_LB_URL || 'http://35.186.151.245:8082').replace(/\/$/, '');
   const defaultTotal = parseInt(import.meta.env.VITE_TOTAL_REQUESTS || '0', 10);
   const timeoutMs = parseInt(import.meta.env.VITE_TIMEOUT_MS || '20000', 10);
 
