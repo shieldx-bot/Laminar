@@ -16,7 +16,7 @@ function parseBackends(raw) {
   return items;
 }
 
-const BACKENDS = parseBackends('http://43.207.121.197:8081,http://54.95.111.110:8081,http://54.249.135.230:8081,http://35.247.171.94:8081,http://34.143.172.6:8081,http://34.180.73.189:8081');
+const BACKENDS = parseBackends('http://43.207.121.197:3000,http://54.95.111.110:3000,http://54.249.135.230:3000,http://35.247.171.94:3000,http://34.143.172.6:3000,http://34.180.73.189:3000');
 if (!BACKENDS.length) {
   console.error('Missing env BACKENDS (comma-separated), e.g. http://localhost:8081,http://localhost:8082');
   process.exit(1);

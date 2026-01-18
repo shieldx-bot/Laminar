@@ -6,7 +6,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = parseInt(process.env.PORT || '8081', 10);
+const PORT = parseInt(process.env.PORT || '3000', 10);
 const INSTANCE_ID = process.env.INSTANCE_ID || `backend-${PORT}`;
 
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://postgres:Vananh12345@@localhost:5432/laminar?sslmode=disable";
