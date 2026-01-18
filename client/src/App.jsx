@@ -186,10 +186,10 @@ function App() {
 
     const queryId = "q-" + Math.random().toString(36).slice(2);
     const ID = Math.floor(Math.random() * 5) + 1;
-    const userSelect = ""
+    let userSelect = "";
     if (ID <= 2){ 
       userSelect = "username";
-    } else if (ID == 3){ 
+    } else if (ID === 3){ 
       userSelect = "email";
     } else { 
       userSelect = "balance";
