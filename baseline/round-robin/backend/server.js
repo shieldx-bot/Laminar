@@ -35,7 +35,7 @@ app.use(express.json());
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const INSTANCE_ID = process.env.INSTANCE_ID || `backend-${PORT}`;
 
-const DATABASE_URL = process.env.DATABASE_URL || "postgresql://postgres:Vananh12345@@localhost:5432/laminar?sslmode=disable";
+const DATABASE_URL = process.env.DATABASE_URL || "postgresql://postgres:Vananh12345@@13.114.152.22:5432/laminar?sslmode=disable";
 if (!DATABASE_URL) {
   // Fail fast so misconfig is obvious.
   console.error('Missing env DATABASE_URL (e.g. postgresql://user:pass@host:5432/db)');
