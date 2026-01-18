@@ -98,7 +98,8 @@ function App() {
   const resultsRef = useRef([]);
   const expectedRef = useRef(0);
   const printedRef = useRef(false);
-  const [countRequests, setCountRequests] = useState(0);
+  // Keep as string to avoid React warning when input is cleared ("" -> NaN).
+  const [countRequests, setCountRequests] = useState('');
 
   // Distribution counters (do NOT affect latency samples)
   const attemptsByBackendRef = useRef(new Map()); // how many RPC attempts were sent to each backend
@@ -181,13 +182,30 @@ function App() {
 
       }
     });
+
+    // Cleanup: prevents duplicate connections/listeners in React StrictMode dev
+    return () => {
+      socket.off('connect');
+      socket.off('connect_error');
+      socket.off('disconnect');
+      socket.off('job_done');
+      try {
+        socket.disconnect();
+      } catch {
+        // ignore
+      }
+      if (socketRef.current === socket) socketRef.current = null;
+      setSocket(null);
+    };
   }, []);
 
   const testRequest = async () => {
     const TOTAL = parseInt(import.meta.env.VITE_TOTAL_REQUESTS, 10); // tăng lên 1000+ nếu muốn P99 ổn định hơn
 
-    const totalToSend = Number.isFinite(countRequests) && countRequests > 0
-      ? countRequests
+    const countRequestsParsed = parseInt(countRequests, 10);
+
+    const totalToSend = Number.isFinite(countRequestsParsed) && countRequestsParsed > 0
+      ? countRequestsParsed
       : (Number.isFinite(TOTAL) && TOTAL > 0 ? TOTAL : 0);
 
     resultsRef.current = [];
@@ -296,7 +314,13 @@ function App() {
         Click on the Vite and React logos to learn more <br></br>
         {import.meta.env.VITE_SOCKET_URL} <br></br>
       </p>
-      <input type="number" value={countRequests} onChange={e => setCountRequests(parseInt(e.target.value, 10))} />
+      <input
+        type="number"
+        value={countRequests}
+        onChange={e => setCountRequests(e.target.value)}
+        placeholder="Requests"
+        min={0}
+      />
       <button onClick={testRequest}>Test Requests</button>
     </>
   )
