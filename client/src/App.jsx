@@ -93,6 +93,7 @@ function SendTelegramMessage(message) {
 function App() {
   const [count, setCount] = useState(0)
   const [socket, setSocket] = useState(null);
+  const socketRef = useRef(null);
 
   const resultsRef = useRef([]);
   const expectedRef = useRef(0);
@@ -103,6 +104,30 @@ function App() {
   const attemptsByBackendRef = useRef(new Map()); // how many RPC attempts were sent to each backend
   const winsByBackendRef = useRef(new Map()); // which backend won (first success) per query
 
+  const waitForSocketConnected = (sock, timeoutMs = 3000) => {
+    return new Promise((resolve) => {
+      if (sock?.connected) return resolve(true);
+      if (!sock) return resolve(false);
+
+      const t = setTimeout(() => {
+        cleanup();
+        resolve(false);
+      }, timeoutMs);
+
+      const onConnect = () => {
+        cleanup();
+        resolve(true);
+      };
+
+      const cleanup = () => {
+        clearTimeout(t);
+        sock.off('connect', onConnect);
+      };
+
+      sock.on('connect', onConnect);
+    });
+  };
+
   useEffect(() => {
 
     const socket = io(import.meta.env.VITE_SOCKET_URL);
@@ -111,6 +136,17 @@ function App() {
       return;
     }
     setSocket(socket);
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      console.log('✅ socket connected', socket.id);
+    });
+    socket.on('connect_error', (err) => {
+      console.error('❌ socket connect_error', err);
+    });
+    socket.on('disconnect', (reason) => {
+      console.warn('⚠️ socket disconnected', reason);
+    });
 
     socket.on("job_done", (msg) => {
       // proto toObject() usually returns camelCase keys:
@@ -161,6 +197,13 @@ function App() {
     attemptsByBackendRef.current = new Map();
     winsByBackendRef.current = new Map();
 
+    // Ensure socket is connected before we start firing requests,
+    // otherwise you'll get 0 "job_done" => 0 samples => NaN becomes null in JSON.
+    const ok = await waitForSocketConnected(socketRef.current, 5000);
+    if (!ok) {
+      console.error('Socket not connected; cannot register queryIds / receive job_done');
+    }
+
     for (let i = 0; i < totalToSend; i++) {
       fetchQueyData();
     }
@@ -178,11 +221,21 @@ function App() {
 
         console.log("Backend distribution (attempts):", distributionSnapshot(attemptsByBackendRef.current));
         console.log("Backend distribution (wins):", distributionSnapshot(winsByBackendRef.current));
+
+        if (resultsRef.current.length === 0) {
+          console.warn('No samples received. Common causes: backend gRPC-Web unreachable/CORS, or socket server not emitting job_done.');
+        }
       }
     }, 10000);
   }
 
   const fetchQueyData = async () => {
+
+    const sock = socketRef.current;
+    if (!sock?.connected) {
+      console.warn('Skip request: socket not connected yet');
+      return;
+    }
 
     const queryId = "q-" + Math.random().toString(36).slice(2);
     const ID = Math.floor(Math.random() * 5) + 1;
@@ -207,7 +260,7 @@ function App() {
     // Start timing as close to the actual send as possible (avoid client-side noise)
     const timeStart = Date.now();
 
-    socket.emit('register', { queryId: queryId });
+    sock.emit('register', { queryId: queryId });
 
     callWithHedging(
       backends,
