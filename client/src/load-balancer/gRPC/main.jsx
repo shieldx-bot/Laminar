@@ -46,11 +46,24 @@ export function callWithHedging(backends, requestData, timeoutMs = 500) {
     backends.forEach((server) => {
       const client = createClient(server.IP);
 
+      let settled = false;
+      let timeoutId;
+
+      const settleOnce = () => {
+        if (settled) return false;
+        settled = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        return true;
+      };
+
       const call = client.callBack(
         request,
         {},
         (err, response) => {
           if (finished) return;
+
+          // Ensure we don't also count the timeout for this call.
+          if (!settleOnce()) return;
 
           if (!err) {
             finished = true;
@@ -73,8 +86,12 @@ export function callWithHedging(backends, requestData, timeoutMs = 500) {
 
       calls.push(call);
 
-      const timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(() => {
         if (finished) return;
+
+        // If callback already fired (success/error), ignore timeout.
+        if (!settleOnce()) return;
+
         call.cancel();
         pending -= 1;
         if (pending === 0 && !finished) {
@@ -84,7 +101,7 @@ export function callWithHedging(backends, requestData, timeoutMs = 500) {
 
       const originalCancel = call.cancel.bind(call);
       call.cancel = () => {
-        clearTimeout(timeoutId);
+        settleOnce();
         originalCancel();
       };
     });

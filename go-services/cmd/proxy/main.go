@@ -310,7 +310,8 @@ func main() {
 
 	port := os.Getenv("LAMINAR_PROXY_PORT")
 	if port == "" {
-		port = "8081"
+		// Default aligns with the client/backend list which uses :8082.
+		port = "8082"
 	}
 
 	wrappedGrpc := grpcweb.WrapServer(
@@ -330,9 +331,23 @@ func main() {
 	})
 
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://34.126.132.214:5173/"},
-		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
-		AllowedHeaders:   []string{"*"},
+		// Note: Browser Origin never includes a trailing slash.
+		AllowedOrigins: []string{
+			"http://localhost:5173",
+			"http://127.0.0.1:5173",
+			"http://34.126.132.214:5173",
+		},
+		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
+		// Be explicit for gRPC-Web preflights; some proxies/browsers are picky.
+		AllowedHeaders: []string{
+			"Content-Type",
+			"X-Grpc-Web",
+			"X-User-Agent",
+			"Grpc-Timeout",
+			"Authorization",
+			"Accept",
+			"User-Agent",
+		},
 		ExposedHeaders:   []string{"grpc-status", "grpc-message", "grpc-status-details-bin"},
 		AllowCredentials: true,
 	})
