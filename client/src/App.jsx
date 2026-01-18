@@ -76,6 +76,7 @@ function App() {
   const resultsRef = useRef([]);
   const expectedRef = useRef(0);
   const printedRef = useRef(false);
+  const [countRequests, setCountRequests] = useState(0);
 
   useEffect(() => {
 
@@ -120,7 +121,7 @@ function App() {
     expectedRef.current = TOTAL;
     printedRef.current = false;
 
-    for (let i = 0; i < TOTAL; i++) {
+    for (let i = 0; i < countRequests; i++) {
       fetchQueyData();
     }
 
@@ -176,6 +177,7 @@ function App() {
         Click on the Vite and React logos to learn more <br></br>
         {import.meta.env.VITE_SOCKET_URL} <br></br>
       </p>
+      <input type="number" value={countRequests} onChange={e => setCountRequests(parseInt(e.target.value, 10))} />
       <button onClick={testRequest}>Test Requests</button>
     </>
   )
