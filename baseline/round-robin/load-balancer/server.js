@@ -3,6 +3,18 @@ const cors = require('cors');
 
 const app = express();
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[baseline-lb] unhandledRejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[baseline-lb] uncaughtException:', err);
+});
+
+function asyncHandler(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
 const ALLOWED_ORIGINS = new Set([
   // React client
   'http://34.126.132.214:5173',
@@ -31,7 +43,7 @@ function parseBackends(raw) {
   return items;
 }
 
-const BACKENDS = parseBackends('http://43.207.121.197:8081,http://54.95.111.110:8081,http://54.249.135.230:8081,http://35.247.171.94:8081,http://34.143.172.6:8081,http://34.180.73.189:8081');
+const BACKENDS = parseBackends('http://43.207.121.197:3000,http://54.95.111.110:3000,http://54.249.135.230:3000,http://35.247.171.94:3000,http://34.143.172.6:3000,http://34.180.73.189:3000');
 if (!BACKENDS.length) {
   console.error('Missing env BACKENDS (comma-separated), e.g. http://localhost:8081,http://localhost:8082');
   process.exit(1);
@@ -57,8 +69,20 @@ app.get('/api/health', (req, res) => {
 });
 
 // Forward body to chosen backend /api/query
-app.post('/api/query', async (req, res) => {
+app.post('/api/query', asyncHandler(async (req, res) => {
   const timeoutMs = parseInt(process.env.FORWARD_TIMEOUT_MS || '20000', 10);
+
+  let requestBody;
+  try {
+    requestBody = JSON.stringify(req.body || {});
+  } catch (err) {
+    res.status(400).json({
+      Status: 'error',
+      error: 'Invalid JSON body',
+      details: err?.message || String(err)
+    });
+    return;
+  }
 
   const startIdx = nextStartIndexRoundRobin();
   const triedBackends = [];
@@ -76,7 +100,7 @@ app.post('/api/query', async (req, res) => {
       const upstream = await fetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(req.body || {}),
+        body: requestBody,
         signal: controller.signal
       });
 
@@ -106,6 +130,22 @@ app.post('/api/query', async (req, res) => {
         ? `Upstream timeout after ${timeoutMs}ms`
         : (lastError?.message || String(lastError || 'Upstream error')),
     TriedBackends: triedBackends
+  });
+}));
+
+// Central error handler (captures async route errors)
+app.use((err, req, res, next) => {
+  console.error('[baseline-lb] request error:', {
+    method: req.method,
+    path: req.path,
+    message: err?.message,
+    stack: err?.stack
+  });
+
+  if (res.headersSent) return next(err);
+  res.status(500).json({
+    Status: 'error',
+    error: err?.message || String(err)
   });
 });
 
