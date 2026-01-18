@@ -93,7 +93,7 @@ func ExecuteSQLQery(query string, db *sql.DB) ([]*structpb.Struct, error) {
 
 }
 func NewComputeServer(db *sql.DB) *ComputeServer {
-	numShares := runtime.NumCPU()
+	numShares := runtime.NumCPU() * 2
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters: 1e7,
