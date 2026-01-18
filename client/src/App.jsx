@@ -151,7 +151,7 @@ function App() {
   const fetchQueyData = async () => {
 
     const queryId = "q-" + Math.random().toString(36).slice(2);
-    const querySQL = `SELECT * FROM users WHERE id = ${Math.floor(Math.random() * 100) + 1};`;
+    const querySQL = `SELECT * FROM users WHERE id = ${Math.floor(Math.random() * 5) + 1};`;
     const timeStart = Date.now();
 
     const ring = new (await import('./load-balancer/vnode/main')).HashRing(shareDataServer, 20);
