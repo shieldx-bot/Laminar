@@ -185,7 +185,16 @@ function App() {
   const fetchQueyData = async () => {
 
     const queryId = "q-" + Math.random().toString(36).slice(2);
-    const querySQL = `SELECT * FROM users WHERE id = ${Math.floor(Math.random() * 5) + 1};`;
+    const ID = Math.floor(Math.random() * 5) + 1;
+    const userSelect = ""
+    if (ID <= 2){ 
+      userSelect = "username";
+    } else if (ID == 3){ 
+      userSelect = "email";
+    } else { 
+      userSelect = "balance";
+    } 
+    const querySQL = `SELECT ${userSelect} FROM users WHERE id = ${ID};`;
 
     const ring = new HashRing(shareDataServer, 20);
     const backends = ring.getNodes(querySQL, 3);
