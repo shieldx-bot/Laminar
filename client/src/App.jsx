@@ -40,6 +40,25 @@ function computeTailStats(samples) {
   };
 }
 
+function bumpCount(map, key, inc = 1) {
+  map.set(key, (map.get(key) || 0) + inc);
+}
+
+function distributionSnapshot(map) {
+  const entries = Array.from(map.entries());
+  entries.sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((acc, [, v]) => acc + v, 0);
+
+  const byBackend = {};
+  const ratio = {};
+  for (const [k, v] of entries) {
+    byBackend[k] = v;
+    ratio[k] = total > 0 ? v / total : 0;
+  }
+
+  return { total, byBackend, ratio };
+}
+
 function SendTelegramMessage(message) {
   console.log("Sending Telegram message:", message);
   const botToken = '8526833134:AAEYEBakLwF5zVvDntHT-_Lnaf9eZPtft5A';
@@ -76,7 +95,15 @@ function App() {
   const resultsRef = useRef([]);
   const expectedRef = useRef(0);
   const printedRef = useRef(false);
-  const [countRequests, setCountRequests] = useState(0);
+  // Keep as string so clearing the input doesn't produce NaN warnings.
+  const [countRequests, setCountRequests] = useState('');
+
+  // Distribution counters (do NOT affect latency samples)
+  const attemptsByBackendRef = useRef(new Map()); // hedged attempts sent to each backend
+  const primaryByBackendRef = useRef(new Map());  // primary (consistent hash) backend per request
+
+  // Robust latency timing: do NOT depend on server echoing Urlcallback
+  const startTimesRef = useRef(new Map()); // queryId -> timeStart(ms)
 
   useEffect(() => {
 
@@ -88,19 +115,31 @@ function App() {
     setSocket(socket);
 
     socket.on("job_done", (msg) => {
-      // proto toObject() usually returns camelCase keys:
-      // urlcallback (not Urlcallback)
-      const t0Raw =
-        msg?.Urlcallback ??
-        msg?.urlcallback ??
-        msg?.Data?.Urlcallback ??
-        msg?.Data?.urlcallback;
+      const queryId =
+        msg?.QueryId ??
+        msg?.queryId ??
+        msg?.query_id ??
+        msg?.Data?.QueryId ??
+        msg?.Data?.queryId;
 
-      const timeStart = parseInt(t0Raw, 10);
+      // Prefer local start time (most accurate, avoids missing Urlcallback)
+      let timeStart = queryId ? startTimesRef.current.get(queryId) : undefined;
+
+      if (!Number.isFinite(timeStart)) {
+        const t0Raw =
+          msg?.Urlcallback ??
+          msg?.urlcallback ??
+          msg?.Data?.Urlcallback ??
+          msg?.Data?.urlcallback;
+        timeStart = parseInt(t0Raw, 10);
+      }
+
       const timeEnd = Date.now();
       const duration = timeEnd - timeStart;
 
       if (!Number.isFinite(duration) || duration < 0) return;
+
+      if (queryId) startTimesRef.current.delete(queryId);
 
       resultsRef.current.push(duration);
 
@@ -115,6 +154,9 @@ function App() {
         console.log("Tail latency stats (ms):", s);
         SendTelegramMessage(`Tail latency stats (ms): ${JSON.stringify(s)}`);
 
+        console.log("Backend distribution (attempts):", distributionSnapshot(attemptsByBackendRef.current));
+        console.log("Backend distribution (primary):", distributionSnapshot(primaryByBackendRef.current));
+
       }
     });
   }, []);
@@ -122,13 +164,19 @@ function App() {
   const testRequest = async () => {
     const TOTAL = parseInt(import.meta.env.VITE_TOTAL_REQUESTS, 10); // tăng lên 1000+ nếu muốn P99 ổn định hơn
 
-    const totalToSend = Number.isFinite(countRequests) && countRequests > 0
-      ? countRequests
+    const countRequestsParsed = parseInt(countRequests, 10);
+
+    const totalToSend = Number.isFinite(countRequestsParsed) && countRequestsParsed > 0
+      ? countRequestsParsed
       : (Number.isFinite(TOTAL) && TOTAL > 0 ? TOTAL : 0);
 
     resultsRef.current = [];
     expectedRef.current = totalToSend;
     printedRef.current = false;
+
+    attemptsByBackendRef.current = new Map();
+    primaryByBackendRef.current = new Map();
+    startTimesRef.current = new Map();
 
     for (let i = 0; i < totalToSend; i++) {
       fetchQueyData();
@@ -144,6 +192,9 @@ function App() {
         s.lost = Math.max(0, expectedRef.current - resultsRef.current.length);
         console.log("Tail latency stats (partial, ms):", s);
         SendTelegramMessage(`Tail latency stats (partial, ms): ${JSON.stringify(s)}`);
+
+        console.log("Backend distribution (attempts):", distributionSnapshot(attemptsByBackendRef.current));
+        console.log("Backend distribution (primary):", distributionSnapshot(primaryByBackendRef.current));
       }
     }, 10000);
   }
@@ -152,10 +203,19 @@ function App() {
 
     const queryId = "q-" + Math.random().toString(36).slice(2);
     const querySQL = `SELECT * FROM users WHERE id = ${Math.floor(Math.random() * 5) + 1};`;
-    const timeStart = Date.now();
 
     const ring = new (await import('./load-balancer/vnode/main')).HashRing(shareDataServer, 20);
     const backends = ring.getNodes(querySQL, 3);
+
+    // Count request distribution to each backend (attempts = actual outgoing traffic)
+    for (const b of backends) {
+      if (b?.IP) bumpCount(attemptsByBackendRef.current, b.IP, 1);
+    }
+    if (backends?.[0]?.IP) bumpCount(primaryByBackendRef.current, backends[0].IP, 1);
+
+    // Start timing as close to actual send as possible
+    const timeStart = Date.now();
+    startTimesRef.current.set(queryId, timeStart);
 
     socket.emit('register', { queryId: queryId });
 
@@ -191,7 +251,13 @@ function App() {
         Click on the Vite and React logos to learn more <br></br>
         {import.meta.env.VITE_SOCKET_URL} <br></br>
       </p>
-      <input type="number" value={countRequests} onChange={e => setCountRequests(parseInt(e.target.value, 10))} />
+      <input
+        type="number"
+        value={countRequests}
+        onChange={e => setCountRequests(e.target.value)}
+        placeholder="Requests"
+        min={0}
+      />
       <button onClick={testRequest}>Test Requests</button>
     </>
   )
