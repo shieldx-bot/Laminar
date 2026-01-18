@@ -93,7 +93,7 @@ func ExecuteSQLQery(query string, db *sql.DB) ([]*structpb.Struct, error) {
 
 }
 func NewComputeServer(db *sql.DB) *ComputeServer {
-	numShares := runtime.NumCPU() * 2
+	numShares := runtime.NumCPU()
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters: 1e7,
@@ -112,7 +112,7 @@ func NewComputeServer(db *sql.DB) *ComputeServer {
 	}
 
 	for i := 0; i < numShares; i++ {
-		s.workerChans[i] = make(chan *Job, 100) // Buffer 100 jobs per worker
+		s.workerChans[i] = make(chan *Job, 200) // Buffer 200 jobs per worker
 
 		go s.startWorker(i, s.workerChans[i], db)
 	}
