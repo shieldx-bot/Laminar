@@ -108,6 +108,10 @@ function App() {
       if (!printedRef.current && expectedRef.current > 0 && resultsRef.current.length >= expectedRef.current) {
         printedRef.current = true;
         const s = computeTailStats(resultsRef.current);
+        s.sent = expectedRef.current;
+        s.expected = expectedRef.current;
+        s.received = resultsRef.current.length;
+        s.lost = Math.max(0, expectedRef.current - resultsRef.current.length);
         console.log("Tail latency stats (ms):", s);
         SendTelegramMessage(`Tail latency stats (ms): ${JSON.stringify(s)}`);
 
@@ -117,11 +121,16 @@ function App() {
 
   const testRequest = async () => {
     const TOTAL = parseInt(import.meta.env.VITE_TOTAL_REQUESTS, 10); // tăng lên 1000+ nếu muốn P99 ổn định hơn
+
+    const totalToSend = Number.isFinite(countRequests) && countRequests > 0
+      ? countRequests
+      : (Number.isFinite(TOTAL) && TOTAL > 0 ? TOTAL : 0);
+
     resultsRef.current = [];
-    expectedRef.current = TOTAL;
+    expectedRef.current = totalToSend;
     printedRef.current = false;
 
-    for (let i = 0; i < countRequests; i++) {
+    for (let i = 0; i < totalToSend; i++) {
       fetchQueyData();
     }
 
@@ -129,7 +138,12 @@ function App() {
     setTimeout(() => {
       if (!printedRef.current) {
         const s = computeTailStats(resultsRef.current);
+        s.sent = totalToSend;
+        s.expected = expectedRef.current;
+        s.received = resultsRef.current.length;
+        s.lost = Math.max(0, expectedRef.current - resultsRef.current.length);
         console.log("Tail latency stats (partial, ms):", s);
+        SendTelegramMessage(`Tail latency stats (partial, ms): ${JSON.stringify(s)}`);
       }
     }, 10000);
   }
@@ -148,7 +162,7 @@ function App() {
     callWithHedging(
       backends,
       { QueryId: queryId, QuerySQL: querySQL, Urlcallback: timeStart.toString(), Action: "READ" },
-      5000
+      20000
     ).catch(err => {
       console.error("❌ RPC failed:", err);
     });
