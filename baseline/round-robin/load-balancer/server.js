@@ -3,7 +3,7 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
-const PORT = parseInt(process.env.PORT || '8090', 10);
+const PORT = parseInt(process.env.PORT || '8082', 10);
 
 function parseBackends(raw) {
   const items = (raw || '')
