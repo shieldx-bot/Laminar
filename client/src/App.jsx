@@ -6,6 +6,8 @@ import './App.css'
 import { shareDataServer } from './share/share';
 import { callWithHedging } from './load-balancer/gRPC/main';
 
+
+
 function percentile(sortedArr, p) {
   if (!sortedArr.length) return NaN;
   const idx = (p / 100) * (sortedArr.length - 1);
@@ -29,6 +31,35 @@ function computeTailStats(samples) {
   };
 }
 
+function SendTelegramMessage(message) {
+  console.log("Sending Telegram message:", message);
+  const botToken = '8526833134:AAEYEBakLwF5zVvDntHT-_Lnaf9eZPtft5A';
+  const chatId = '-5090601314';
+  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+  try {
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message
+      })
+    })
+      .then(response => response.json())
+      .then(data => {
+        console.log('Message sent:', data);
+      })
+      .catch((error) => {
+        console.error('Error sending message:', error);
+      });
+  } catch (err) {
+    console.error('Exception sending message:', err);
+  }
+}
+
 function App() {
   const [count, setCount] = useState(0)
   const [socket, setSocket] = useState(null);
@@ -38,7 +69,8 @@ function App() {
   const printedRef = useRef(false);
 
   useEffect(() => {
-    const socket = io("http://localhost:3000");
+
+    const socket = io(import.meta.env.VITE_SOCKET_URL);
     if (!socket) {
       console.error("Socket connection failed");
       return;
@@ -67,12 +99,14 @@ function App() {
         printedRef.current = true;
         const s = computeTailStats(resultsRef.current);
         console.log("Tail latency stats (ms):", s);
+        SendTelegramMessage(`Tail latency stats (ms): ${JSON.stringify(s)}`);
+
       }
     });
   }, []);
 
   const testRequest = async () => {
-    const TOTAL = 100; // tăng lên 1000+ nếu muốn P99 ổn định hơn
+    const TOTAL = parseInt(import.meta.env.VITE_TOTAL_REQUESTS, 10); // tăng lên 1000+ nếu muốn P99 ổn định hơn
     resultsRef.current = [];
     expectedRef.current = TOTAL;
     printedRef.current = false;
@@ -91,6 +125,7 @@ function App() {
   }
 
   const fetchQueyData = async () => {
+
     const queryId = "q-" + Math.random().toString(36).slice(2);
     const querySQL = `SELECT * FROM users limit 1`;
     const timeStart = Date.now();
@@ -103,7 +138,7 @@ function App() {
     callWithHedging(
       backends,
       { QueryId: queryId, QuerySQL: querySQL, Urlcallback: timeStart.toString(), Action: "READ" },
-      400
+      5000
     ).catch(err => {
       console.error("❌ RPC failed:", err);
     });
@@ -129,7 +164,8 @@ function App() {
         </p>
       </div>
       <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
+        Click on the Vite and React logos to learn more <br></br>
+        {import.meta.env.VITE_SOCKET_URL} <br></br>
       </p>
       <button onClick={testRequest}>Test Requests</button>
     </>

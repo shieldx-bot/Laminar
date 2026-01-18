@@ -1,12 +1,9 @@
-IMG_MAIN ?= shieldxbot/my-nimbus-main:v0.0.8
-IMG_DEMO ?= shieldxbot/my-demo-go:v0.0.8
+IMG_CLIENT ?= shieldxbot/laminar-client:v0.0.1
+ 
 
 
 
-
-.PHONY: r
-r:
-  go run ./cmd/compute/main.go
+ 
 
 
 .PHONY: proto
@@ -18,6 +15,8 @@ proto:
 		api/proto/laminar.proto
 
 
-.PHONY: docker-build-banlancer
-docker-build-balancer:
-	docker build -t laminar-balancer:latest .
+.PHONY: docker-build-client 
+docker-build-client:
+	docker build -t $(IMG_CLIENT)  -f ./client/Dockerfile ./client
+ 	docker push $(IMG_CLIENT)
+ 

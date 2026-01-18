@@ -1,17 +1,17 @@
 export const shareDataServer = [
-    { IP: "localhost:8082", latency: 0 },
-    // { IP: "localhost:50052", latency: 0 },
-    // { IP: "localhost:50053", latency: 0 },
-    // { IP: "localhost:50054", latency: 0 },
-    // { IP: "localhost:50055", latency: 0 },
-    // { IP: "localhost:50056", latency: 0 },
-    // { IP: "localhost:50057", latency: 0 },
-    // { IP: "localhost:50058", latency: 0 },
-    // { IP: "localhost:50059", latency: 0 },
-    // { IP: "localhost:500510", latency: 0 },
-    // { IP: "localhost:500511", latency: 0 },
-    // { IP: "localhost:500512", latency: 0 },
-    // { IP: "localhost:500513", latency: 0 },
+    { IP: "43.207.121.197:8082", latency: 0 }, // backend 8
+    { IP: "54.95.111.110:8082", latency: 0 }, // backend 7
+    { IP: "54.249.135.230:8082", latency: 0 }, // backend 6
+    // { IP: "13.114.152.22:50054", latency: 0 }, // postgre SQL
+    { IP: "35.247.171.94:8082", latency: 0 }, // backend 2
+    { IP: "34.143.172.6:8082", latency: 0 }, // backend 1
+    { IP: "34.180.73.189:8082", latency: 0 }, // backend 3
+    // { IP: "localhost:8082", latency: 0 },
+    // { IP: "localhost:8082", latency: 0 },
+    // { IP: "localhost:8082", latency: 0 },
+    // { IP: "localhost:8082", latency: 0 },
+    // { IP: "localhost:8082", latency: 0 },
+    // { IP: "localhost:8082", latency: 0 },
 ]
 
 
