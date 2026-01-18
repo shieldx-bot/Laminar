@@ -3,7 +3,21 @@ const { Pool } = require('pg');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+const ALLOWED_ORIGINS = new Set([
+  // React client
+  'http://34.126.132.214:5173',
+  // Load balancer origin (only matters if browser calls backend directly)
+  'http://35.186.151.245:8082'
+]);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    return cb(null, ALLOWED_ORIGINS.has(origin));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['content-type']
+}));
 app.use(express.json());
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
