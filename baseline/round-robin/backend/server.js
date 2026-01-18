@@ -1,7 +1,9 @@
 const express = require('express');
 const { Pool } = require('pg');
+const cors = require('cors');
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
 const PORT = parseInt(process.env.PORT || '8081', 10);
